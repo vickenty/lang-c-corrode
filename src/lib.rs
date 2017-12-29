@@ -230,11 +230,7 @@ impl<'a> TypeBuilder<'a> {
         Ok(())
     }
 
-    fn build_qual_type(
-        &self,
-        alloc: &'a Alloc<'a>,
-        ty: Type<'a>,
-    ) -> Result<QualType<'a>, Error> {
+    fn build_qual_type(&self, alloc: &'a Alloc<'a>, ty: Type<'a>) -> Result<QualType<'a>, Error> {
         Ok(QualType {
             ty: ty,
             volatile: self.volatile,
@@ -242,7 +238,12 @@ impl<'a> TypeBuilder<'a> {
         })
     }
 
-    fn visit_specifier(&mut self, alloc: &'a Alloc<'a>, env: &mut Env<'a>, spec: &ast::TypeSpecifier) -> Result<(), Error> {
+    fn visit_specifier(
+        &mut self,
+        alloc: &'a Alloc<'a>,
+        env: &mut Env<'a>,
+        spec: &ast::TypeSpecifier,
+    ) -> Result<(), Error> {
         let mut new_kind = None;
         let mut new_sign = Sign::None;
 
@@ -396,7 +397,9 @@ pub fn interpret_declaration<'a>(
                 }
                 ast::StorageClassSpecifier::Typedef => is_typedef = true,
             },
-            ast::DeclarationSpecifier::TypeSpecifier(ref s) => builder.visit_specifier(alloc, env, &s.node)?,
+            ast::DeclarationSpecifier::TypeSpecifier(ref s) => {
+                builder.visit_specifier(alloc, env, &s.node)?
+            }
             ast::DeclarationSpecifier::TypeQualifier(ref s) => builder.visit_qualifier(&s.node)?,
             ast::DeclarationSpecifier::Function(ref s) => match s.node {
                 ast::FunctionSpecifier::Inline => inline = true,
@@ -625,7 +628,11 @@ pub struct Field<'a> {
     bits: Option<usize>,
 }
 
-fn interpret_struct_type<'a>(alloc: &'a Alloc<'a>, env: &mut Env<'a>, sty: &Node<ast::StructType>) -> Result<&'a Struct<'a>, Error> {
+fn interpret_struct_type<'a>(
+    alloc: &'a Alloc<'a>,
+    env: &mut Env<'a>,
+    sty: &Node<ast::StructType>,
+) -> Result<&'a Struct<'a>, Error> {
     let kind = match sty.node.kind.node {
         ast::StructKind::Struct => StructKind::Struct,
         ast::StructKind::Union => StructKind::Union,
@@ -655,14 +662,21 @@ fn interpret_struct_type<'a>(alloc: &'a Alloc<'a>, env: &mut Env<'a>, sty: &Node
         if fields.is_some() {
             return Err("duplicate struct definition");
         }
-        let new_fields = decls.iter().map(|fd| interpret_field_decl(alloc, env, fd)).collect::<Result<_, _>>()?;
+        let new_fields = decls
+            .iter()
+            .map(|fd| interpret_field_decl(alloc, env, fd))
+            .collect::<Result<_, _>>()?;
         *fields = Some(new_fields);
     }
 
     Ok(s)
 }
 
-fn interpret_field_decl<'a>(alloc: &'a Alloc<'a>, env: &mut Env<'a>, field_def: &Node<ast::StructDeclaration>) -> Result<&'a Field<'a>, Error> {
+fn interpret_field_decl<'a>(
+    alloc: &'a Alloc<'a>,
+    env: &mut Env<'a>,
+    field_def: &Node<ast::StructDeclaration>,
+) -> Result<&'a Field<'a>, Error> {
     unimplemented!();
 }
 
@@ -672,6 +686,8 @@ fn test_struct() {
     let alloc = &Alloc::new();
     let env = &mut Env::new();
 
-    assert_eq!(interpret_decl_str(parse_env, alloc, env, "struct x { struct x *next; } *head;"),
-            Ok(vec![]));
+    assert_eq!(
+        interpret_decl_str(parse_env, alloc, env, "struct x { struct x *next; } *head;"),
+        Ok(vec![])
+    );
 }
