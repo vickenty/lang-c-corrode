@@ -116,7 +116,7 @@ impl<'a> Env<'a> {
     fn lookup_struct(&self, tag: &str, top_only: bool) -> Option<Result<&'a Struct<'a>, Error>> {
         match self.lookup_tag(tag, top_only) {
             Some(&TagDef::Struct(s)) => Some(Ok(s)),
-            Some(_) => Some(Err("not a struct or a unino")),
+            Some(_) => Some(Err("not a struct or a union")),
             None => None,
         }
     }
@@ -230,7 +230,7 @@ impl<'a> TypeBuilder<'a> {
         Ok(())
     }
 
-    fn build_qual_type(&self, alloc: &'a Alloc<'a>, ty: Type<'a>) -> Result<QualType<'a>, Error> {
+    fn build_qual_type(&self, _alloc: &'a Alloc<'a>, ty: Type<'a>) -> Result<QualType<'a>, Error> {
         Ok(QualType {
             ty: ty,
             volatile: self.volatile,
@@ -346,8 +346,8 @@ fn derive_type<'a>(
     for dd in derived {
         match dd.node {
             ast::DerivedDeclarator::Pointer(ref s) => qty = derive_pointer(alloc, qty, s)?,
-            ast::DerivedDeclarator::Array(ref s) => unimplemented!(),
-            ast::DerivedDeclarator::Function(ref s) => unimplemented!(),
+            ast::DerivedDeclarator::Array(_) => unimplemented!(),
+            ast::DerivedDeclarator::Function(_) => unimplemented!(),
             ast::DerivedDeclarator::KRFunction(_) => {
                 return Err("K&R-style function definition not allowed here")
             }
