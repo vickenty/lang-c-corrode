@@ -492,33 +492,58 @@ pub fn interpret_declaration<'a>(
     }
 
     let base_qty = builder.build(env)?;
+    let storage = storage.unwrap_or(default_storage);
 
     let mut res = vec![];
 
     for init_declarator in &decl.node.declarators {
-        let declr = &init_declarator.node.declarator.node;
-        let qty = derive_type(base_qty.clone(), &declr.derived)?;
+        let (qty, name) = derive_declarator(
+            alloc,
+            env,
+            base_qty.clone(),
+            &init_declarator.node.declarator,
+        )?;
 
-        match declr.kind.node {
-            ast::DeclaratorKind::Abstract => (),
-            ast::DeclaratorKind::Identifier(ref id) => {
-                if is_typedef {
-                    env.add_typedef(&id.node.name, qty);
-                } else {
-                    let var = alloc.new_variable(Variable {
-                        storage: storage.unwrap_or(default_storage),
-                        name: id.node.name.clone(),
-                        ty: qty,
-                    });
-                    env.add_variable(&id.node.name, var);
-                    res.push(Declaration::Variable(var));
-                }
+        let name = name.expect("declaration with abstract declartor");
+
+        let value = init_declarator
+            .node
+            .initializer
+            .as_ref()
+            .map(|_init| unimplemented!());
+
+        match (&qty.ty, is_typedef, value) {
+            (_, true, None) => env.add_typedef(&name, qty),
+            (_, true, Some(_)) => return Err("typedef is initialized"),
+            (_, false, _) => {
+                let var = alloc.new_variable(Variable {
+                    storage: storage,
+                    name: name.clone(),
+                    ty: qty,
+                });
+                env.add_variable(&name, var);
+                res.push(Declaration::Variable(var));
             }
-            ast::DeclaratorKind::Declarator(_) => unimplemented!(),
         }
     }
 
     Ok(res)
+}
+
+fn derive_declarator<'a>(
+    alloc: &'a Alloc<'a>,
+    env: &mut Env<'a>,
+    base_qty: QualType<'a>,
+    declr: &Node<ast::Declarator>,
+) -> Result<(QualType<'a>, Option<String>), Error> {
+
+    let qty = derive_type(base_qty.clone(), &declr.node.derived)?;
+
+    match declr.node.kind.node {
+        ast::DeclaratorKind::Abstract => Ok((qty, None)),
+        ast::DeclaratorKind::Identifier(ref id) => Ok((qty, Some(id.node.name.clone()))),
+        ast::DeclaratorKind::Declarator(ref declr) => derive_declarator(alloc, env, qty, declr),
+    }
 }
 
 #[cfg(test)]
@@ -696,7 +721,6 @@ pub enum StructKind {
 pub struct Field<'a> {
     name: Option<String>,
     ty: QualType<'a>,
-    bits: Option<usize>,
 }
 
 fn interpret_struct_type<'a>(
@@ -772,12 +796,10 @@ fn interpret_field_decl<'a>(
 
     if field_def.node.declarators.is_empty() {
         if let Type::Struct(Ref(&Struct { tag: None, .. })) = base_qty.ty {
-            let f = alloc.new_field(Field {
+            output.push(alloc.new_field(Field {
                 name: None,
                 ty: base_qty,
-                bits: None,
-            });
-            output.push(f);
+            }));
         }
         return Ok(());
     }
@@ -787,19 +809,11 @@ fn interpret_field_decl<'a>(
             unimplemented!();
         }
         if let Some(ref declr) = sdeclr.node.declarator {
-            let qty = derive_type(base_qty.clone(), &declr.node.derived)?;
-            match declr.node.kind.node {
-                ast::DeclaratorKind::Abstract => panic!("abstract struct field declarator"),
-                ast::DeclaratorKind::Identifier(ref id) => {
-                    let f = Field {
-                        name: Some(id.node.name.clone()),
-                        ty: qty,
-                        bits: None,
-                    };
-                    output.push(alloc.new_field(f));
-                }
-                ast::DeclaratorKind::Declarator(_) => unimplemented!(),
-            }
+            let (qty, name) = derive_declarator(alloc, env, base_qty.clone(), declr)?;
+            output.push(alloc.new_field(Field {
+                name: name,
+                ty: qty,
+            }));
         }
     }
 
@@ -813,7 +827,7 @@ fn test_struct() {
     let env = &mut Env::new();
 
     let decls =
-        interpret_decl_str(parse_env, alloc, env, "struct x { struct x *next; } head;").unwrap();
+        interpret_decl_str(parse_env, alloc, env, "struct x { struct x (*next); } head;").unwrap();
     assert!(decls.len() == 1);
     let decl = decls.get(0).unwrap();
     let head = match *decl {
