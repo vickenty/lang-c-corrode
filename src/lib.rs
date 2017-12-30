@@ -1,6 +1,7 @@
 extern crate dynamic_arena;
 extern crate lang_c;
 
+use std::fmt;
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -15,11 +16,77 @@ impl<'a> Alloc<'a> {
     pub fn new() -> Alloc<'a> {
         Alloc(dynamic_arena::DynamicArena::new_bounded())
     }
-    fn new_variable(&'a self, v: Variable<'a>) -> &'a Variable<'a> {
-        self.0.alloc(v)
+    fn new_variable(&'a self, v: Variable<'a>) -> Ref<'a, Variable<'a>> {
+        Ref(self.0.alloc(v))
     }
-    fn new_struct(&'a self, v: Struct<'a>) -> &'a Struct<'a> {
-        self.0.alloc(v)
+    fn new_struct(&'a self, v: Struct<'a>) -> Ref<'a, Struct<'a>> {
+        Ref(self.0.alloc(v))
+    }
+    fn new_field(&'a self, v: Field<'a>) -> Ref<'a, Field<'a>> {
+        Ref(self.0.alloc(v))
+    }
+}
+
+#[derive(PartialEq)]
+pub struct Ref<'a, T: 'a>(&'a T);
+
+impl<'a, T: PartialEq> Ref<'a, T> {
+    pub fn same_as(&self, other: &Self) -> bool {
+        self.0 as *const _ == other.0 as *const _
+    }
+}
+
+impl<'a, T: fmt::Debug> fmt::Debug for Ref<'a, T> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        thread_local! {
+            static SEEN: RefCell<HashMap<usize, (usize, bool)>> = RefCell::new(HashMap::new());
+        }
+
+        let addr = self.0 as *const _ as usize;
+        SEEN.with(|seen_map| {
+            let seen = seen_map.borrow().get(&addr).cloned();
+            match seen {
+                Some((id, _)) => {
+                    seen_map.borrow_mut().get_mut(&addr).unwrap().1 = true;
+                    write!(fmt, "\\{}", id)
+                }
+                None => {
+                    let id = seen_map.borrow().len();
+                    seen_map.borrow_mut().insert(addr, (id, false));
+                    let repr = match fmt.alternate() {
+                        true => format!("{:#?}", self.0),
+                        false => format!("{:?}", self.0),
+                    };
+                    let used = seen_map
+                        .borrow()
+                        .get(&addr)
+                        .map(|&(_, used)| used)
+                        .unwrap_or(false);
+                    if used {
+                        write!(fmt, "<{}> {}", id, repr)?;
+                    } else {
+                        write!(fmt, "{}", repr)?;
+                    }
+                    seen_map.borrow_mut().remove(&addr);
+                    Ok(())
+                }
+            }
+        })
+    }
+}
+
+impl<'a, T> Clone for Ref<'a, T> {
+    fn clone(&self) -> Ref<'a, T> {
+        Ref(self.0)
+    }
+}
+
+impl<'a, T> Copy for Ref<'a, T> {}
+
+impl<'a, T> std::ops::Deref for Ref<'a, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &*self.0
     }
 }
 
@@ -40,7 +107,7 @@ impl<'a> Scope<'a> {
         self.names.insert(name.into(), NameDef::Typedef(qty));
     }
 
-    fn add_variable(&mut self, name: &str, var: &'a Variable<'a>) {
+    fn add_variable(&mut self, name: &str, var: Ref<'a, Variable<'a>>) {
         self.names.insert(name.into(), NameDef::Variable(var));
     }
 
@@ -48,7 +115,7 @@ impl<'a> Scope<'a> {
         self.names.get(name)
     }
 
-    fn add_struct(&mut self, tag: &str, s: &'a Struct<'a>) {
+    fn add_struct(&mut self, tag: &str, s: Ref<'a, Struct<'a>>) {
         self.tags.insert(tag.into(), TagDef::Struct(s));
     }
 
@@ -76,11 +143,11 @@ impl<'a> Env<'a> {
         self.top().add_typedef(name, qty);
     }
 
-    fn add_variable(&mut self, name: &str, var: &'a Variable<'a>) {
+    fn add_variable(&mut self, name: &str, var: Ref<'a, Variable<'a>>) {
         self.top().add_variable(name, var);
     }
 
-    fn add_struct(&mut self, tag: &str, s: &'a Struct<'a>) {
+    fn add_struct(&mut self, tag: &str, s: Ref<'a, Struct<'a>>) {
         self.top().add_struct(tag, s);
     }
 
@@ -113,7 +180,11 @@ impl<'a> Env<'a> {
         None
     }
 
-    fn lookup_struct(&self, tag: &str, top_only: bool) -> Option<Result<&'a Struct<'a>, Error>> {
+    fn lookup_struct(
+        &self,
+        tag: &str,
+        top_only: bool,
+    ) -> Option<Result<Ref<'a, Struct<'a>>, Error>> {
         match self.lookup_tag(tag, top_only) {
             Some(&TagDef::Struct(s)) => Some(Ok(s)),
             Some(_) => Some(Err("not a struct or a union")),
@@ -123,17 +194,17 @@ impl<'a> Env<'a> {
 }
 
 enum NameDef<'a> {
-    Variable(&'a Variable<'a>),
+    Variable(Ref<'a, Variable<'a>>),
     Typedef(QualType<'a>),
 }
 
 enum TagDef<'a> {
-    Struct(&'a Struct<'a>),
+    Struct(Ref<'a, Struct<'a>>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Declaration<'a> {
-    Variable(&'a Variable<'a>),
+    Variable(Ref<'a, Variable<'a>>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -158,7 +229,7 @@ pub struct QualType<'a> {
     constant: bool,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(PartialEq, Clone, Debug)]
 pub enum Type<'a> {
     Void,
     Char,
@@ -176,7 +247,7 @@ pub enum Type<'a> {
     Double,
     Bool,
     Pointer(Box<QualType<'a>>),
-    Struct(&'a Struct<'a>),
+    Struct(Ref<'a, Struct<'a>>),
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -195,7 +266,7 @@ enum TypeKind<'a> {
     Double,
     Bool,
     Typedef(String),
-    Struct(&'a Struct<'a>),
+    Struct(Ref<'a, Struct<'a>>),
 }
 
 struct TypeBuilder<'a> {
@@ -230,7 +301,7 @@ impl<'a> TypeBuilder<'a> {
         Ok(())
     }
 
-    fn build_qual_type(&self, _alloc: &'a Alloc<'a>, ty: Type<'a>) -> Result<QualType<'a>, Error> {
+    fn build_qual_type(&self, ty: Type<'a>) -> Result<QualType<'a>, Error> {
         Ok(QualType {
             ty: ty,
             volatile: self.volatile,
@@ -288,7 +359,7 @@ impl<'a> TypeBuilder<'a> {
         Ok(())
     }
 
-    fn build(mut self, alloc: &'a Alloc<'a>, env: &Env<'a>) -> Result<QualType<'a>, Error> {
+    fn build(mut self, env: &Env<'a>) -> Result<QualType<'a>, Error> {
         let kind = self.kind.take().unwrap_or(TypeKind::Int);
 
         let ty = match (kind, self.short, self.long, self.sign) {
@@ -326,6 +397,8 @@ impl<'a> TypeBuilder<'a> {
                 return Ok(qty);
             }
 
+            (TypeKind::Struct(sty), 0, 0, Sign::None) => Type::Struct(sty),
+
             (_, _, _, Sign::Signed) => return Err("invalid use of signed"),
             (_, _, _, Sign::Unsigned) => return Err("invalid use of unsigned"),
             (_, s, 0, _) if s > 0 => return Err("invalid use of short"),
@@ -334,18 +407,17 @@ impl<'a> TypeBuilder<'a> {
             spec => panic!("unhandled type spec: {:?}", spec),
         };
 
-        self.build_qual_type(alloc, ty)
+        self.build_qual_type(ty)
     }
 }
 
 fn derive_type<'a>(
-    alloc: &'a Alloc<'a>,
     mut qty: QualType<'a>,
     derived: &[Node<ast::DerivedDeclarator>],
 ) -> Result<QualType<'a>, Error> {
     for dd in derived {
         match dd.node {
-            ast::DerivedDeclarator::Pointer(ref s) => qty = derive_pointer(alloc, qty, s)?,
+            ast::DerivedDeclarator::Pointer(ref s) => qty = derive_pointer(qty, s)?,
             ast::DerivedDeclarator::Array(_) => unimplemented!(),
             ast::DerivedDeclarator::Function(_) => unimplemented!(),
             ast::DerivedDeclarator::KRFunction(_) => {
@@ -358,7 +430,6 @@ fn derive_type<'a>(
 }
 
 fn derive_pointer<'a>(
-    alloc: &'a Alloc<'a>,
     qty: QualType<'a>,
     quals: &[Node<ast::PointerQualifier>],
 ) -> Result<QualType<'a>, Error> {
@@ -369,7 +440,7 @@ fn derive_pointer<'a>(
             ast::PointerQualifier::Extension(_) => (),
         }
     }
-    Ok(builder.build_qual_type(alloc, Type::Pointer(Box::new(qty)))?)
+    Ok(builder.build_qual_type(Type::Pointer(Box::new(qty)))?)
 }
 
 pub fn interpret_declaration<'a>(
@@ -420,13 +491,13 @@ pub fn interpret_declaration<'a>(
         }
     }
 
-    let base_qty = builder.build(alloc, env)?;
+    let base_qty = builder.build(env)?;
 
     let mut res = vec![];
 
     for init_declarator in &decl.node.declarators {
         let declr = &init_declarator.node.declarator.node;
-        let qty = derive_type(alloc, base_qty.clone(), &declr.derived)?;
+        let qty = derive_type(base_qty.clone(), &declr.derived)?;
 
         match declr.kind.node {
             ast::DeclaratorKind::Abstract => (),
@@ -461,7 +532,7 @@ where
     for spec in specifiers {
         builder.visit_specifier(alloc, env, spec)?;
     }
-    let qty = builder.build(alloc, env)?;
+    let qty = builder.build(env)?;
     Ok(qty.ty.clone())
 }
 
@@ -598,18 +669,18 @@ fn test_typedef() {
     );
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(PartialEq, Clone, Debug)]
 pub struct Struct<'a> {
     kind: StructKind,
-    name: Option<String>,
-    fields: RefCell<Option<Vec<&'a Field<'a>>>>,
+    tag: Option<String>,
+    fields: RefCell<Option<Vec<Ref<'a, Field<'a>>>>>,
 }
 
 impl<'a> Struct<'a> {
-    fn new(kind: StructKind, name: Option<String>) -> Struct<'a> {
+    fn new(kind: StructKind, tag: Option<String>) -> Struct<'a> {
         Struct {
             kind: kind,
-            name: name,
+            tag: tag,
             fields: RefCell::new(None),
         }
     }
@@ -632,25 +703,25 @@ fn interpret_struct_type<'a>(
     alloc: &'a Alloc<'a>,
     env: &mut Env<'a>,
     sty: &Node<ast::StructType>,
-) -> Result<&'a Struct<'a>, Error> {
+) -> Result<Ref<'a, Struct<'a>>, Error> {
     let kind = match sty.node.kind.node {
         ast::StructKind::Struct => StructKind::Struct,
         ast::StructKind::Union => StructKind::Union,
     };
-    let name = sty.node.identifier.as_ref().map(|i| &i.node.name[..]);
+    let tag = sty.node.identifier.as_ref().map(|i| &i.node.name[..]);
     let decls = &sty.node.declarations;
 
     // A struct without a definition may refer to something from outer scope. A struct with a
     // declration may complement a previous forward declaration in the current scope or define a
     // new one.
-    let lookup = name.and_then(|tag| env.lookup_struct(tag, !decls.is_empty()));
+    let lookup = tag.and_then(|tag| env.lookup_struct(tag, !decls.is_empty()));
     let s = match lookup {
         Some(Err(e)) => return Err(e),
         Some(Ok(s)) if s.kind != kind => return Err("wrong kind of tag"),
         Some(Ok(s)) => s,
         None => {
-            let s = alloc.new_struct(Struct::new(kind, name.map(ToOwned::to_owned)));
-            if let Some(tag) = name {
+            let s = alloc.new_struct(Struct::new(kind, tag.map(ToOwned::to_owned)));
+            if let Some(tag) = tag {
                 env.add_struct(tag, s);
             }
             s
@@ -662,10 +733,18 @@ fn interpret_struct_type<'a>(
         if fields.is_some() {
             return Err("duplicate struct definition");
         }
-        let new_fields = decls
-            .iter()
-            .map(|fd| interpret_field_decl(alloc, env, fd))
-            .collect::<Result<_, _>>()?;
+
+        let mut new_fields = Vec::new();
+
+        for decl in decls {
+            match decl.node {
+                ast::StructDeclaration::Field(ref f) => {
+                    interpret_field_decl(alloc, env, f, &mut new_fields)?
+                }
+                ast::StructDeclaration::StaticAssert(_) => (),
+            }
+        }
+
         *fields = Some(new_fields);
     }
 
@@ -675,9 +754,56 @@ fn interpret_struct_type<'a>(
 fn interpret_field_decl<'a>(
     alloc: &'a Alloc<'a>,
     env: &mut Env<'a>,
-    field_def: &Node<ast::StructDeclaration>,
-) -> Result<&'a Field<'a>, Error> {
-    unimplemented!();
+    field_def: &Node<ast::StructField>,
+    output: &mut Vec<Ref<'a, Field<'a>>>,
+) -> Result<(), Error> {
+    let mut builder = TypeBuilder::new();
+
+    for s in &field_def.node.specifiers {
+        match s.node {
+            ast::SpecifierQualifier::TypeQualifier(ref q) => builder.visit_qualifier(&q.node)?,
+            ast::SpecifierQualifier::TypeSpecifier(ref s) => {
+                builder.visit_specifier(alloc, env, &s.node)?
+            }
+        }
+    }
+
+    let base_qty = builder.build(env)?;
+
+    if field_def.node.declarators.is_empty() {
+        if let Type::Struct(Ref(&Struct { tag: None, .. })) = base_qty.ty {
+            let f = alloc.new_field(Field {
+                name: None,
+                ty: base_qty,
+                bits: None,
+            });
+            output.push(f);
+        }
+        return Ok(());
+    }
+
+    for sdeclr in &field_def.node.declarators {
+        if sdeclr.node.bit_width.is_some() {
+            unimplemented!();
+        }
+        if let Some(ref declr) = sdeclr.node.declarator {
+            let qty = derive_type(base_qty.clone(), &declr.node.derived)?;
+            match declr.node.kind.node {
+                ast::DeclaratorKind::Abstract => panic!("abstract struct field declarator"),
+                ast::DeclaratorKind::Identifier(ref id) => {
+                    let f = Field {
+                        name: Some(id.node.name.clone()),
+                        ty: qty,
+                        bits: None,
+                    };
+                    output.push(alloc.new_field(f));
+                }
+                ast::DeclaratorKind::Declarator(_) => unimplemented!(),
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[test]
@@ -686,8 +812,33 @@ fn test_struct() {
     let alloc = &Alloc::new();
     let env = &mut Env::new();
 
-    assert_eq!(
-        interpret_decl_str(parse_env, alloc, env, "struct x { struct x *next; } *head;"),
-        Ok(vec![])
-    );
+    let decls =
+        interpret_decl_str(parse_env, alloc, env, "struct x { struct x *next; } head;").unwrap();
+    assert!(decls.len() == 1);
+    let decl = decls.get(0).unwrap();
+    let head = match *decl {
+        Declaration::Variable(v) => v,
+        _ => panic!("not a variable"),
+    };
+
+    assert_eq!(head.storage, Storage::Static);
+    assert_eq!(head.name, "head");
+
+    let head_sty = match head.ty.ty {
+        Type::Struct(s) => s,
+        _ => panic!("head has wrong type: {:#?}", head.ty),
+    };
+
+    let fields_ref = head_sty.fields.borrow();
+    let fields = fields_ref.as_ref().unwrap();
+    assert_eq!(fields.len(), 1);
+
+    let next = fields.get(0).unwrap();
+    match next.ty.ty {
+        Type::Pointer(ref qty) => match qty.ty {
+            Type::Struct(next_sty) => assert_eq!(next_sty.same_as(&head_sty), true),
+            _ => panic!("next has wrong type: {:#?}", next.ty),
+        },
+        _ => panic!("next has wrong type: {:#?}", next.ty),
+    }
 }
