@@ -248,6 +248,42 @@ pub enum Type<'a> {
     Bool,
     Pointer(Box<QualType<'a>>),
     Struct(Ref<'a, Struct<'a>>),
+    Function(Box<FunctionTy<'a>>),
+}
+
+#[cfg(test)]
+impl<'a> From<Type<'a>> for Box<QualType<'a>> {
+    fn from(ty: Type<'a>) -> Box<QualType<'a>> {
+        Box::new(ty.into())
+    }
+}
+#[cfg(test)]
+impl<'a> From<Type<'a>> for QualType<'a> {
+    fn from(ty: Type<'a>) -> QualType<'a> {
+        QualType {
+            ty: ty,
+            volatile: false,
+            constant: false,
+        }
+    }
+}
+#[cfg(test)]
+impl<'a> From<FunctionTy<'a>> for Type<'a> {
+    fn from(ft: FunctionTy<'a>) -> Type<'a> {
+        Type::Function(Box::new(ft))
+    }
+}
+#[cfg(test)]
+impl<'a> From<FunctionTy<'a>> for QualType<'a> {
+    fn from(ft: FunctionTy<'a>) -> QualType<'a> {
+        QualType::from(Type::from(ft))
+    }
+}
+#[cfg(test)]
+impl<'a> From<FunctionTy<'a>> for Box<QualType<'a>> {
+    fn from(ft: FunctionTy<'a>) -> Box<QualType<'a>> {
+        Box::new(ft.into())
+    }
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -412,6 +448,8 @@ impl<'a> TypeBuilder<'a> {
 }
 
 fn derive_type<'a>(
+    alloc: &'a Alloc<'a>,
+    env: &mut Env<'a>,
     mut qty: QualType<'a>,
     derived: &[Node<ast::DerivedDeclarator>],
 ) -> Result<QualType<'a>, Error> {
@@ -419,9 +457,11 @@ fn derive_type<'a>(
         match dd.node {
             ast::DerivedDeclarator::Pointer(ref s) => qty = derive_pointer(qty, s)?,
             ast::DerivedDeclarator::Array(_) => unimplemented!(),
-            ast::DerivedDeclarator::Function(_) => unimplemented!(),
-            ast::DerivedDeclarator::KRFunction(_) => {
-                return Err("K&R-style function definition not allowed here")
+            ast::DerivedDeclarator::Function(ref fd) => {
+                qty = derive_func_type(alloc, env, qty, fd)?;
+            }
+            ast::DerivedDeclarator::KRFunction(ref fs) => {
+                qty = derive_func_type_kr(qty, fs)?;
             }
         }
     }
@@ -536,8 +576,7 @@ fn derive_declarator<'a>(
     base_qty: QualType<'a>,
     declr: &Node<ast::Declarator>,
 ) -> Result<(QualType<'a>, Option<String>), Error> {
-
-    let qty = derive_type(base_qty.clone(), &declr.node.derived)?;
+    let qty = derive_type(alloc, env, base_qty.clone(), &declr.node.derived)?;
 
     match declr.node.kind.node {
         ast::DeclaratorKind::Abstract => Ok((qty, None)),
@@ -826,8 +865,12 @@ fn test_struct() {
     let alloc = &Alloc::new();
     let env = &mut Env::new();
 
-    let decls =
-        interpret_decl_str(parse_env, alloc, env, "struct x { struct x (*next); } head;").unwrap();
+    let decls = interpret_decl_str(
+        parse_env,
+        alloc,
+        env,
+        "struct x { struct x (*next); } head;",
+    ).unwrap();
     assert!(decls.len() == 1);
     let decl = decls.get(0).unwrap();
     let head = match *decl {
@@ -855,4 +898,144 @@ fn test_struct() {
         },
         _ => panic!("next has wrong type: {:#?}", next.ty),
     }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct FunctionTy<'a> {
+    return_type: QualType<'a>,
+    parameters: Vec<Parameter<'a>>,
+    variadic: bool,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Parameter<'a> {
+    name: Option<String>,
+    ty: QualType<'a>,
+}
+
+fn derive_func_type<'a>(
+    alloc: &'a Alloc<'a>,
+    env: &mut Env<'a>,
+    ret_ty: QualType<'a>,
+    fd: &Node<ast::FunctionDeclarator>,
+) -> Result<QualType<'a>, Error> {
+    let params = fd.node
+        .parameters
+        .iter()
+        .map(|pd| interpret_parameter(alloc, env, pd))
+        .collect::<Result<_, _>>()?;
+
+    Ok(QualType {
+        constant: false,
+        volatile: false,
+        ty: Type::Function(Box::new(FunctionTy {
+            return_type: ret_ty,
+            parameters: params,
+            variadic: fd.node.ellipsis == ast::Ellipsis::Some,
+        })),
+    })
+}
+
+fn interpret_parameter<'a>(
+    alloc: &'a Alloc<'a>,
+    env: &mut Env<'a>,
+    pd: &Node<ast::ParameterDeclaration>,
+) -> Result<Parameter<'a>, Error> {
+    let mut builder = TypeBuilder::new();
+
+    for spec in &pd.node.specifiers {
+        match spec.node {
+            ast::DeclarationSpecifier::StorageClass(ref sc) => {
+                if sc.node != ast::StorageClassSpecifier::Register {
+                    return Err("storage class spcifier not allowed in a parameter declaration");
+                }
+            }
+            ast::DeclarationSpecifier::Function(_) => {
+                return Err("function specifier not allowed in parameter declaration")
+            }
+            ast::DeclarationSpecifier::Alignment(_) => {
+                return Err("alignment specifier not allowed in parameter declaration")
+            }
+            ast::DeclarationSpecifier::TypeQualifier(ref q) => builder.visit_qualifier(&q.node)?,
+            ast::DeclarationSpecifier::TypeSpecifier(ref s) => {
+                builder.visit_specifier(alloc, env, &s.node)?
+            }
+            ast::DeclarationSpecifier::Extension(_) => (),
+        }
+    }
+
+    let base_qty = builder.build(env)?;
+
+    Ok(match pd.node.declarator {
+        Some(ref d) => {
+            let (qty, name) = derive_declarator(alloc, env, base_qty, d)?;
+            Parameter {
+                name: name,
+                ty: qty,
+            }
+        }
+        None => Parameter {
+            name: None,
+            ty: base_qty,
+        },
+    })
+}
+
+fn derive_func_type_kr<'a>(
+    ret_ty: QualType<'a>,
+    fs: &Vec<Node<ast::Identifier>>,
+) -> Result<QualType<'a>, Error> {
+    let default_ty = QualType {
+        volatile: false,
+        constant: false,
+        ty: Type::SInt,
+    };
+
+    let params = fs.iter()
+        .map(|id| {
+            Parameter {
+                name: Some(id.node.name.clone()),
+                ty: default_ty.clone(),
+            }
+        })
+        .collect();
+
+    Ok(QualType {
+        volatile: false,
+        constant: false,
+        ty: Type::Function(Box::new(FunctionTy {
+            return_type: ret_ty,
+            parameters: params,
+            variadic: false,
+        })),
+    })
+}
+
+#[test]
+fn test_function_ptr() {
+    let parse_env = &mut lang_c::env::Env::with_gnu(true);
+    let alloc = &Alloc::new();
+    assert_eq!(
+        interpret_decl_str(parse_env, alloc, &mut Env::new(), "int (*p)(int, ...);"),
+        Ok(vec![
+            Declaration::Variable(
+                alloc.new_variable(Variable {
+                    storage: Storage::Static,
+                    name: "p".into(),
+                    ty: Type::Pointer(
+                        FunctionTy {
+                            variadic: true,
+                            return_type: Type::SInt.into(),
+                            parameters: vec![
+                                Parameter {
+                                    name: None,
+                                    ty: Type::SInt.into(),
+                                },
+                            ],
+                        }.into(),
+                    ).into(),
+                }),
+            ),
+        ])
+    );
 }
