@@ -2,7 +2,7 @@ extern crate dynamic_arena;
 extern crate lang_c;
 
 use std::fmt;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 use lang_c::ast;
@@ -23,6 +23,9 @@ impl<'a> Alloc<'a> {
         Ref(self.0.alloc(v))
     }
     fn new_field(&'a self, v: Field<'a>) -> Ref<'a, Field<'a>> {
+        Ref(self.0.alloc(v))
+    }
+    fn new_function(&'a self, v: Function<'a>) -> Ref<'a, Function<'a>> {
         Ref(self.0.alloc(v))
     }
 }
@@ -111,6 +114,10 @@ impl<'a> Scope<'a> {
         self.names.insert(name.into(), NameDef::Variable(var));
     }
 
+    fn add_function(&mut self, name: &str, fun: Ref<'a, Function<'a>>) {
+        self.names.insert(name.into(), NameDef::Function(fun));
+    }
+
     fn lookup_name(&self, name: &str) -> Option<&NameDef<'a>> {
         self.names.get(name)
     }
@@ -147,6 +154,10 @@ impl<'a> Env<'a> {
         self.top().add_variable(name, var);
     }
 
+    fn add_function(&mut self, name: &str, fun: Ref<'a, Function<'a>>) {
+        self.top().add_function(name, fun);
+    }
+
     fn add_struct(&mut self, tag: &str, s: Ref<'a, Struct<'a>>) {
         self.top().add_struct(tag, s);
     }
@@ -165,6 +176,22 @@ impl<'a> Env<'a> {
             Some(&NameDef::Typedef(ref qty)) => Ok(qty),
             Some(_) => Err("not a type"),
             None => Err("unknown type"),
+        }
+    }
+
+    fn lookup_variable(&self, name: &str) -> Result<Option<Ref<'a, Variable<'a>>>, Error> {
+        match self.lookup_name(name) {
+            Some(&NameDef::Variable(var)) => Ok(Some(var)),
+            Some(_) => Err("not a varaible"),
+            None => Ok(None),
+        }
+    }
+
+    fn lookup_function(&self, name: &str) -> Result<Option<Ref<'a, Function<'a>>>, Error> {
+        match self.lookup_name(name) {
+            Some(&NameDef::Function(fun)) => Ok(Some(fun)),
+            Some(_) => Err("not a function"),
+            None => Ok(None),
         }
     }
 
@@ -196,6 +223,7 @@ impl<'a> Env<'a> {
 enum NameDef<'a> {
     Variable(Ref<'a, Variable<'a>>),
     Typedef(QualType<'a>),
+    Function(Ref<'a, Function<'a>>),
 }
 
 enum TagDef<'a> {
@@ -205,21 +233,29 @@ enum TagDef<'a> {
 #[derive(Debug, PartialEq, Clone)]
 pub enum Declaration<'a> {
     Variable(Ref<'a, Variable<'a>>),
+    FunctionDeclaration(Ref<'a, Function<'a>>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Variable<'a> {
-    storage: Storage,
+    linkage: Linkage,
     name: String,
     ty: QualType<'a>,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
-pub enum Storage {
-    Auto,
-    Register,
-    Static,
-    Extern,
+pub enum Linkage {
+    Internal,
+    External,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Function<'a> {
+    name: String,
+    linkage: Linkage,
+    ty: Box<FunctionTy<'a>>,
+    noreturn: Cell<bool>,
+    inline: Cell<bool>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -487,7 +523,6 @@ pub fn interpret_declaration<'a>(
     alloc: &'a Alloc<'a>,
     env: &mut Env<'a>,
     decl: &Node<ast::Declaration>,
-    default_storage: Storage,
 ) -> Result<Vec<Declaration<'a>>, Error> {
     let mut builder = TypeBuilder::new();
     let mut storage = None;
@@ -499,14 +534,11 @@ pub fn interpret_declaration<'a>(
         let mut new_storage = None;
         match spec.node {
             ast::DeclarationSpecifier::StorageClass(ref s) => match s.node {
-                ast::StorageClassSpecifier::Auto => new_storage = Some(Storage::Auto),
-                ast::StorageClassSpecifier::Extern => new_storage = Some(Storage::Extern),
-                ast::StorageClassSpecifier::Static => new_storage = Some(Storage::Static),
-                ast::StorageClassSpecifier::Register => new_storage = Some(Storage::Register),
                 ast::StorageClassSpecifier::ThreadLocal => {
                     return Err("_Thread_local is not supported")
                 }
                 ast::StorageClassSpecifier::Typedef => is_typedef = true,
+                ref other => new_storage = Some(other),
             },
             ast::DeclarationSpecifier::TypeSpecifier(ref s) => {
                 builder.visit_specifier(alloc, env, &s.node)?
@@ -531,8 +563,12 @@ pub fn interpret_declaration<'a>(
         }
     }
 
+    let linkage = match storage {
+        Some(&ast::StorageClassSpecifier::Static) => Linkage::Internal,
+        _ => Linkage::External,
+    };
+
     let base_qty = builder.build(env)?;
-    let storage = storage.unwrap_or(default_storage);
 
     let mut res = vec![];
 
@@ -546,6 +582,8 @@ pub fn interpret_declaration<'a>(
 
         let name = name.expect("declaration with abstract declartor");
 
+        let inline = inline && storage.is_none();
+
         let value = init_declarator
             .node
             .initializer
@@ -553,15 +591,48 @@ pub fn interpret_declaration<'a>(
             .map(|_init| unimplemented!());
 
         match (&qty.ty, is_typedef, value) {
-            (_, true, None) => env.add_typedef(&name, qty),
+            (_, true, None) => env.add_typedef(&name, qty.clone()),
             (_, true, Some(_)) => return Err("typedef is initialized"),
+
+            (&Type::Function(ref fun_ty), false, None) => {
+                let fun = match env.lookup_function(&name)? {
+                    Some(fun) => {
+                        fun.inline.set(fun.inline.get() && inline);
+                        fun.noreturn.set(fun.noreturn.get() || noreturn);
+                        fun
+                    }
+                    None => {
+                        let fun = alloc.new_function(Function {
+                            linkage: linkage,
+                            name: name.clone(),
+                            ty: fun_ty.clone(),
+                            inline: inline.into(),
+                            noreturn: noreturn.into(),
+                        });
+                        env.add_function(&name, fun);
+                        fun
+                    }
+                };
+
+                res.push(Declaration::FunctionDeclaration(fun));
+            }
+
+            (&Type::Function(_), false, Some(_)) => return Err("function is initialized"),
+
             (_, false, _) => {
-                let var = alloc.new_variable(Variable {
-                    storage: storage,
-                    name: name.clone(),
-                    ty: qty,
+                let var = match storage {
+                    Some(&ast::StorageClassSpecifier::Extern) => env.lookup_variable(&name)?,
+                    _ => None,
+                };
+                let var = var.unwrap_or_else(|| {
+                    let var = alloc.new_variable(Variable {
+                        linkage: linkage,
+                        name: name.clone(),
+                        ty: qty.clone(),
+                    });
+                    env.add_variable(&name, var);
+                    var
                 });
-                env.add_variable(&name, var);
                 res.push(Declaration::Variable(var));
             }
         }
@@ -653,7 +724,7 @@ fn interpret_decl_str<'a>(
     decl_str: &str,
 ) -> Result<Vec<Declaration<'a>>, Error> {
     let decl = lang_c::parser::declaration(decl_str, parse_env).expect("syntax error");
-    interpret_declaration(alloc, env, &decl, Storage::Static)
+    interpret_declaration(alloc, env, &decl)
 }
 
 #[test]
@@ -665,7 +736,7 @@ fn test_decl() {
         interpret_decl_str(parse_env, alloc, env, "extern int x, * const y;"),
         Ok(vec![
             Declaration::Variable(alloc.new_variable(Variable {
-                storage: Storage::Extern,
+                linkage: Linkage::External,
                 name: "x".into(),
                 ty: QualType {
                     volatile: false,
@@ -674,7 +745,7 @@ fn test_decl() {
                 },
             })),
             Declaration::Variable(alloc.new_variable(Variable {
-                storage: Storage::Extern,
+                linkage: Linkage::External,
                 name: "y".into(),
                 ty: QualType {
                     volatile: false,
@@ -703,7 +774,7 @@ fn test_typedef() {
         interpret_decl_str(parse_env, alloc, env, "a c;"),
         Ok(vec![
             Declaration::Variable(alloc.new_variable(Variable {
-                storage: Storage::Static,
+                linkage: Linkage::External,
                 name: "c".into(),
                 ty: QualType {
                     volatile: true,
@@ -717,7 +788,7 @@ fn test_typedef() {
         interpret_decl_str(parse_env, alloc, env, "const b d;"),
         Ok(vec![
             Declaration::Variable(alloc.new_variable(Variable {
-                storage: Storage::Static,
+                linkage: Linkage::External,
                 name: "d".into(),
                 ty: QualType {
                     volatile: false,
@@ -878,7 +949,6 @@ fn test_struct() {
         _ => panic!("not a variable"),
     };
 
-    assert_eq!(head.storage, Storage::Static);
     assert_eq!(head.name, "head");
 
     let head_sty = match head.ty.ty {
@@ -1018,8 +1088,8 @@ fn test_function_ptr() {
         Ok(vec![
             Declaration::Variable(
                 alloc.new_variable(Variable {
-                    storage: Storage::Static,
                     name: "p".into(),
+                    linkage: Linkage::External,
                     ty: Type::Pointer(
                         FunctionTy {
                             variadic: true,
