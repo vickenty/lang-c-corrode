@@ -718,22 +718,22 @@ fn test_specs() {
 
 #[cfg(test)]
 fn interpret_decl_str<'a>(
-    parse_env: &mut lang_c::env::Env,
     alloc: &'a Alloc<'a>,
     env: &mut Env<'a>,
     decl_str: &str,
 ) -> Result<Vec<Declaration<'a>>, Error> {
-    let decl = lang_c::parser::declaration(decl_str, parse_env).expect("syntax error");
-    interpret_declaration(alloc, env, &decl)
+    let conf = &Default::default();
+    let parse =
+        lang_c::driver::parse_preprocessed(conf, decl_str.to_owned()).expect("syntax error");
+    interpret_translation_unit(alloc, env, &parse.unit)
 }
 
 #[test]
 fn test_decl() {
-    let parse_env = &mut lang_c::env::Env::with_gnu(true);
     let alloc = &Alloc::new();
     let env = &mut Env::new();
     assert_eq!(
-        interpret_decl_str(parse_env, alloc, env, "extern int x, * const y;"),
+        interpret_decl_str(alloc, env, "extern int x, * const y;"),
         Ok(vec![
             Declaration::Variable(alloc.new_variable(Variable {
                 linkage: Linkage::External,
@@ -763,15 +763,10 @@ fn test_decl() {
 
 #[test]
 fn test_typedef() {
-    let parse_env = &mut lang_c::env::Env::with_gnu(true);
     let alloc = &Alloc::new();
     let env = &mut Env::new();
     assert_eq!(
-        interpret_decl_str(parse_env, alloc, env, "volatile int typedef a, *b;"),
-        Ok(vec![])
-    );
-    assert_eq!(
-        interpret_decl_str(parse_env, alloc, env, "a c;"),
+        interpret_decl_str(alloc, env, "volatile int typedef a, *b; a c; const b d;"),
         Ok(vec![
             Declaration::Variable(alloc.new_variable(Variable {
                 linkage: Linkage::External,
@@ -782,11 +777,6 @@ fn test_typedef() {
                     ty: Type::SInt,
                 },
             })),
-        ])
-    );
-    assert_eq!(
-        interpret_decl_str(parse_env, alloc, env, "const b d;"),
-        Ok(vec![
             Declaration::Variable(alloc.new_variable(Variable {
                 linkage: Linkage::External,
                 name: "d".into(),
@@ -802,6 +792,28 @@ fn test_typedef() {
             })),
         ])
     );
+}
+
+#[test]
+fn test_typedef_fn() {
+    let alloc = &Alloc::new();
+    let env = &mut Env::new();
+    assert_eq!(
+        interpret_decl_str(alloc, env, "typedef int foo(); foo a;"),
+        Ok(vec![
+            Declaration::FunctionDeclaration(alloc.new_function(Function {
+                linkage: Linkage::External,
+                name: "a".into(),
+                inline: false.into(),
+                noreturn: false.into(),
+                ty: Box::new(FunctionTy {
+                    return_type: Type::SInt.into(),
+                    parameters: Vec::new(),
+                    variadic: false,
+                }),
+            })),
+        ])
+    )
 }
 
 #[derive(PartialEq, Clone, Debug)]
@@ -932,16 +944,10 @@ fn interpret_field_decl<'a>(
 
 #[test]
 fn test_struct() {
-    let parse_env = &mut lang_c::env::Env::with_gnu(true);
     let alloc = &Alloc::new();
     let env = &mut Env::new();
 
-    let decls = interpret_decl_str(
-        parse_env,
-        alloc,
-        env,
-        "struct x { struct x (*next); } head;",
-    ).unwrap();
+    let decls = interpret_decl_str(alloc, env, "struct x { struct x (*next); } head;").unwrap();
     assert!(decls.len() == 1);
     let decl = decls.get(0).unwrap();
     let head = match *decl {
@@ -1081,10 +1087,9 @@ fn derive_func_type_kr<'a>(
 
 #[test]
 fn test_function_ptr() {
-    let parse_env = &mut lang_c::env::Env::with_gnu(true);
     let alloc = &Alloc::new();
     assert_eq!(
-        interpret_decl_str(parse_env, alloc, &mut Env::new(), "int (*p)(int, ...);"),
+        interpret_decl_str(alloc, &mut Env::new(), "int (*p)(int, ...);"),
         Ok(vec![
             Declaration::Variable(
                 alloc.new_variable(Variable {
@@ -1106,4 +1111,21 @@ fn test_function_ptr() {
             ),
         ])
     );
+}
+
+pub fn interpret_translation_unit<'a>(
+    alloc: &'a Alloc<'a>,
+    env: &mut Env<'a>,
+    unit: &ast::TranslationUnit,
+) -> Result<Vec<Declaration<'a>>, Error> {
+    let mut res = Vec::new();
+    for ed in &unit.0 {
+        match ed.node {
+            ast::ExternalDeclaration::Declaration(ref decl) => {
+                res.extend(interpret_declaration(alloc, env, decl)?)
+            }
+            _ => unimplemented!(),
+        }
+    }
+    Ok(res)
 }
