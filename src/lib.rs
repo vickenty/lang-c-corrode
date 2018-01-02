@@ -1,6 +1,8 @@
 extern crate dynamic_arena;
 extern crate lang_c;
 
+pub mod gen;
+
 use std::fmt;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -36,6 +38,10 @@ pub struct Ref<'a, T: 'a>(&'a T);
 impl<'a, T: PartialEq> Ref<'a, T> {
     pub fn same_as(&self, other: &Self) -> bool {
         self.0 as *const _ == other.0 as *const _
+    }
+
+    pub fn id(&self) -> usize {
+        self.0 as *const _ as usize
     }
 }
 
