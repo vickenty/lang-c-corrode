@@ -246,11 +246,13 @@ pub enum Declaration<'a> {
 pub struct Variable<'a> {
     linkage: Linkage,
     name: String,
+    defined: Cell<bool>,
     ty: QualType<'a>,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Linkage {
+    None,
     Internal,
     External,
 }
@@ -269,6 +271,12 @@ pub struct QualType<'a> {
     ty: Type<'a>,
     volatile: bool,
     constant: bool,
+}
+
+impl<'a> QualType<'a> {
+    fn merge(&self, _other: &QualType<'a>) {
+        // nothing to do yet
+    }
 }
 
 #[derive(PartialEq, Clone, Debug)]
@@ -528,6 +536,7 @@ fn derive_pointer<'a>(
 pub fn interpret_declaration<'a>(
     alloc: &'a Alloc<'a>,
     env: &mut Env<'a>,
+    file_scope: bool,
     decl: &Node<ast::Declaration>,
 ) -> Result<Vec<Declaration<'a>>, Error> {
     let mut builder = TypeBuilder::new();
@@ -569,10 +578,13 @@ pub fn interpret_declaration<'a>(
         }
     }
 
-    let linkage = match storage {
-        Some(&ast::StorageClassSpecifier::Static) => Linkage::Internal,
-        _ => Linkage::External,
+    let linkage = match (file_scope, storage) {
+        (true, Some(&ast::StorageClassSpecifier::Static)) => Linkage::Internal,
+        (true, _) => Linkage::External,
+        (false, _) => Linkage::None,
     };
+
+    let inline = inline && storage.is_none();
 
     let base_qty = builder.build(env)?;
 
@@ -587,8 +599,6 @@ pub fn interpret_declaration<'a>(
         )?;
 
         let name = name.expect("declaration with abstract declartor");
-
-        let inline = inline && storage.is_none();
 
         let value = init_declarator
             .node
@@ -626,19 +636,32 @@ pub fn interpret_declaration<'a>(
             (&Type::Function(_), false, Some(_)) => return Err("function is initialized"),
 
             (_, false, _) => {
-                let var = match storage {
-                    Some(&ast::StorageClassSpecifier::Extern) => env.lookup_variable(&name)?,
-                    _ => None,
+                let is_extern = storage == Some(&ast::StorageClassSpecifier::Extern);
+
+                let var = match is_extern || file_scope {
+                    true => env.lookup_variable(&name)?,
+                    false => None,
                 };
-                let var = var.unwrap_or_else(|| {
-                    let var = alloc.new_variable(Variable {
-                        linkage: linkage,
-                        name: name.clone(),
-                        ty: qty.clone(),
-                    });
-                    env.add_variable(&name, var);
-                    var
-                });
+
+                let var = match var {
+                    Some(var) => {
+                        var.ty.merge(&qty);
+                        var
+                    }
+                    None => {
+                        let var = alloc.new_variable(Variable {
+                            linkage: linkage,
+                            defined: false.into(),
+                            name: name.clone(),
+                            ty: qty.clone(),
+                        });
+                        env.add_variable(&name, var);
+                        var
+                    }
+                };
+
+                var.defined
+                    .set(var.defined.get() || !is_extern || value.is_some());
                 res.push(Declaration::Variable(var));
             }
         }
@@ -738,11 +761,13 @@ fn interpret_decl_str<'a>(
 fn test_decl() {
     let alloc = &Alloc::new();
     let env = &mut Env::new();
+
     assert_eq!(
         interpret_decl_str(alloc, env, "extern int x, * const y;"),
         Ok(vec![
             Declaration::Variable(alloc.new_variable(Variable {
                 linkage: Linkage::External,
+                defined: false.into(),
                 name: "x".into(),
                 ty: QualType {
                     volatile: false,
@@ -752,6 +777,7 @@ fn test_decl() {
             })),
             Declaration::Variable(alloc.new_variable(Variable {
                 linkage: Linkage::External,
+                defined: false.into(),
                 name: "y".into(),
                 ty: QualType {
                     volatile: false,
@@ -768,6 +794,63 @@ fn test_decl() {
 }
 
 #[test]
+fn test_external_def() {
+    let alloc = &Alloc::new();
+    let env = &mut Env::new();
+
+    let x = alloc.new_variable(Variable {
+        linkage: Linkage::Internal,
+        defined: true.into(),
+        name: "x".into(),
+        ty: QualType {
+            volatile: false,
+            constant: false,
+            ty: Type::SInt,
+        },
+    });
+
+    let y = alloc.new_variable(Variable {
+        linkage: Linkage::External,
+        defined: false.into(),
+        name: "y".into(),
+        ty: QualType {
+            volatile: false,
+            constant: false,
+            ty: Type::SInt,
+        },
+    });
+
+    let z = alloc.new_variable(Variable {
+        linkage: Linkage::External,
+        defined: true.into(),
+        name: "z".into(),
+        ty: QualType {
+            volatile: false,
+            constant: false,
+            ty: Type::SInt,
+        },
+    });
+
+    assert_eq!(
+        interpret_decl_str(
+            alloc,
+            env,
+            "static int x; extern int x; \
+             extern int y; extern int y; \
+             extern int z; int z;"
+        ),
+        Ok(vec![
+            Declaration::Variable(x),
+            Declaration::Variable(x),
+            Declaration::Variable(y),
+            Declaration::Variable(y),
+            Declaration::Variable(z),
+            Declaration::Variable(z),
+        ])
+    );
+}
+
+#[test]
 fn test_typedef() {
     let alloc = &Alloc::new();
     let env = &mut Env::new();
@@ -776,6 +859,7 @@ fn test_typedef() {
         Ok(vec![
             Declaration::Variable(alloc.new_variable(Variable {
                 linkage: Linkage::External,
+                defined: true.into(),
                 name: "c".into(),
                 ty: QualType {
                     volatile: true,
@@ -785,6 +869,7 @@ fn test_typedef() {
             })),
             Declaration::Variable(alloc.new_variable(Variable {
                 linkage: Linkage::External,
+                defined: true.into(),
                 name: "d".into(),
                 ty: QualType {
                     volatile: false,
@@ -1100,6 +1185,7 @@ fn test_function_ptr() {
             Declaration::Variable(
                 alloc.new_variable(Variable {
                     name: "p".into(),
+                    defined: true.into(),
                     linkage: Linkage::External,
                     ty: Type::Pointer(
                         FunctionTy {
@@ -1128,7 +1214,7 @@ pub fn interpret_translation_unit<'a>(
     for ed in &unit.0 {
         match ed.node {
             ast::ExternalDeclaration::Declaration(ref decl) => {
-                res.extend(interpret_declaration(alloc, env, decl)?)
+                res.extend(interpret_declaration(alloc, env, true, decl)?)
             }
             _ => unimplemented!(),
         }

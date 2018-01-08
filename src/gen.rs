@@ -43,6 +43,7 @@ pub fn write_variable<'a>(
     var: &Variable<'a>
 ) -> fmt::Result {
     match var.linkage {
+        Linkage::None => unimplemented!(),
         Linkage::Internal => {
             write!(dst, "pub static {}: ", var.name)?;
             write_type_ref(env, dst, &var.ty)?;
