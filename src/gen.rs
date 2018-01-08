@@ -1,7 +1,6 @@
 use std::fmt::{self, Write};
 
-use super::{Declaration, Field, Function, QualType, Ref, Struct, StructKind, Type,
-            Variable};
+use super::{Declaration, Field, Function, QualType, Ref, Struct, StructKind, Type, Variable};
 
 #[derive(Default)]
 pub struct Env<'a> {
