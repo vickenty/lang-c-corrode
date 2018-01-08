@@ -180,10 +180,7 @@ pub fn write_type_ref<'b, 'a: 'b>(
                 mode: ItemMode::Translate,
                 kind: ItemKind::Struct(s),
             });
-            match s.tag {
-                Some(ref tag) => write!(dst, "{}", tag),
-                None => write!(dst, "Gen{:x}", s.id()),
-            }
+            write_struct_tag(env, dst, s)
         }
         Type::Pointer(ref ty) => {
             write!(dst, "*mut ")?;
