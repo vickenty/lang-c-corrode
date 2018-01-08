@@ -196,24 +196,6 @@ use lang_c;
 use super::{interpret_translation_unit, Alloc};
 
 #[test]
-fn test_struct() {
-    let alloc = &Alloc::new();
-    let env = &mut super::Env::new();
-    let res = lang_c::driver::parse_preprocessed(
-        &Default::default(),
-        "typedef int *ip; union x { ip x; };".into(),
-    ).unwrap();
-    let _ = interpret_translation_unit(alloc, env, &res.unit).unwrap();
-    let sty = env.lookup_struct("x", false).unwrap().unwrap();
-    let buf = &mut String::new();
-    write_struct(&mut Env::default(), buf, ItemMode::Translate, sty).unwrap();
-    assert_eq!(
-        &buf[..],
-        "#[repr(C)]\npub union x {\n    pub x: *mut c_int,\n}\n"
-    );
-}
-
-#[test]
 fn test_static() {
     let alloc = &Alloc::new();
     let parse = lang_c::driver::parse_preprocessed(
@@ -242,7 +224,7 @@ fn test_extern() {
 }
 
 #[test]
-fn test_anon_struct() {
+fn test_struct() {
     let alloc = &Alloc::new();
     let parse = lang_c::driver::parse_preprocessed(
         &Default::default(),
