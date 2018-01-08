@@ -1,6 +1,6 @@
 use std::fmt::{self, Write};
 
-use super::{Field, QualType, Ref, Struct, StructKind, Type, Declaration, Variable, Linkage};
+use super::{Declaration, Field, Linkage, QualType, Ref, Struct, StructKind, Type, Variable};
 
 #[derive(Default)]
 pub struct Env<'a> {
@@ -37,11 +37,7 @@ pub fn write_translation_unit<'a>(
     Ok(())
 }
 
-pub fn write_variable<'a>(
-    env: &mut Env<'a>,
-    dst: &mut Write,
-    var: &Variable<'a>
-) -> fmt::Result {
+pub fn write_variable<'a>(env: &mut Env<'a>, dst: &mut Write, var: &Variable<'a>) -> fmt::Result {
     match var.linkage {
         Linkage::None => unimplemented!(),
         Linkage::Internal => {
@@ -134,9 +130,10 @@ pub fn write_type_ref<'b, 'a: 'b>(
                 kind: ItemKind::Struct(s),
             });
             match s.tag {
-            Some(ref tag) => write!(dst, "{}", tag),
-            None => write!(dst, "Gen{:x}", s.id()),
-        }}
+                Some(ref tag) => write!(dst, "{}", tag),
+                None => write!(dst, "Gen{:x}", s.id()),
+            }
+        }
         Type::Pointer(ref ty) => {
             env.backlog.push(Item {
                 mode: ItemMode::Opaque,
@@ -175,7 +172,10 @@ fn test_struct() {
 #[test]
 fn test_static() {
     let alloc = &Alloc::new();
-    let parse = lang_c::driver::parse_preprocessed(&Default::default(), "typedef int *ip; static ip x;".into()).unwrap();
+    let parse = lang_c::driver::parse_preprocessed(
+        &Default::default(),
+        "typedef int *ip; static ip x;".into(),
+    ).unwrap();
     let buf = &mut String::new();
     let hir = interpret_translation_unit(alloc, &mut super::Env::new(), &parse.unit).unwrap();
     write_translation_unit(&mut Default::default(), buf, &hir).unwrap();
@@ -185,7 +185,8 @@ fn test_static() {
 #[test]
 fn test_extern() {
     let alloc = &Alloc::new();
-    let parse = lang_c::driver::parse_preprocessed(&Default::default(), "extern char x;".into()).unwrap();
+    let parse =
+        lang_c::driver::parse_preprocessed(&Default::default(), "extern char x;".into()).unwrap();
     let buf = &mut String::new();
     let hir = interpret_translation_unit(alloc, &mut super::Env::new(), &parse.unit).unwrap();
     write_translation_unit(&mut Default::default(), buf, &hir).unwrap();
