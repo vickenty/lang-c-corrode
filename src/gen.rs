@@ -1,6 +1,7 @@
-use std::fmt::{self, Write};
+use std::io;
+use super::{Declaration, Function, QualType, Ref, Struct, StructKind, Type, Variable};
 
-use super::{Declaration, Field, Function, QualType, Ref, Struct, StructKind, Type, Variable};
+pub type Result = io::Result<()>;
 
 #[derive(Default)]
 pub struct Env<'a> {
@@ -26,9 +27,9 @@ pub enum ItemKind<'a> {
 
 pub fn write_translation_unit<'a>(
     env: &mut Env<'a>,
-    dst: &mut Write,
+    dst: &mut io::Write,
     decl_list: &[Declaration<'a>],
-) -> fmt::Result {
+) -> Result {
     for decl in decl_list {
         match *decl {
             Declaration::Variable(var) => env.backlog.push(Item {
@@ -55,10 +56,10 @@ pub fn write_translation_unit<'a>(
 
 pub fn write_variable<'a>(
     env: &mut Env<'a>,
-    dst: &mut Write,
+    dst: &mut io::Write,
     mode: ItemMode,
     var: Ref<'a, Variable<'a>>,
-) -> fmt::Result {
+) -> Result {
     match mode {
         ItemMode::Translate => {
             writeln!(dst, "#[no_mangle]")?;
@@ -75,11 +76,7 @@ pub fn write_variable<'a>(
     Ok(())
 }
 
-fn write_struct_tag<'a>(
-    _env: &mut Env<'a>,
-    dst: &mut fmt::Write,
-    s: Ref<'a, Struct<'a>>,
-) -> fmt::Result {
+fn write_struct_tag<'a>(_env: &mut Env<'a>, dst: &mut io::Write, s: Ref<'a, Struct<'a>>) -> Result {
     match s.tag {
         Some(ref tag) => write!(dst, "{}", tag),
         None => write!(dst, "Gen{:x}", s.id()),
@@ -88,10 +85,10 @@ fn write_struct_tag<'a>(
 
 pub fn write_struct<'a>(
     env: &mut Env<'a>,
-    dst: &mut fmt::Write,
+    dst: &mut io::Write,
     mode: ItemMode,
     s: Ref<'a, Struct<'a>>,
-) -> fmt::Result {
+) -> Result {
     match mode {
         ItemMode::Opaque => write_struct_opaque(env, dst, s),
         ItemMode::Translate => write_struct_def(env, dst, s),
@@ -100,9 +97,9 @@ pub fn write_struct<'a>(
 
 pub fn write_struct_opaque<'a>(
     env: &mut Env<'a>,
-    dst: &mut fmt::Write,
+    dst: &mut io::Write,
     s: Ref<'a, Struct<'a>>,
-) -> fmt::Result {
+) -> Result {
     write!(dst, "pub enum ")?;
     write_struct_tag(env, dst, s)?;
     writeln!(dst, "{{}}")
@@ -110,9 +107,9 @@ pub fn write_struct_opaque<'a>(
 
 pub fn write_struct_def<'a>(
     env: &mut Env<'a>,
-    dst: &mut fmt::Write,
+    dst: &mut io::Write,
     s: Ref<'a, Struct<'a>>,
-) -> fmt::Result {
+) -> Result {
     let kind = match s.kind {
         StructKind::Struct => "struct",
         StructKind::Union => "union",
@@ -124,18 +121,18 @@ pub fn write_struct_def<'a>(
     write_struct_tag(env, dst, s)?;
     writeln!(dst, " {{")?;
 
-    let mut seq_name = String::new();
     if let Some(ref fields) = *s.fields.borrow() {
-        for (seq, field) in fields.iter().enumerate() {
-            let name = match field.name {
-                Some(ref name) => name,
-                None => {
-                    seq_name.clear();
-                    write!(&mut seq_name, "anon_{}", seq)?;
-                    &seq_name
-                }
-            };
-            write_struct_field(env, dst, name, field)?;
+        let seq = &mut (0..);
+
+        for field in fields {
+            write!(dst, "    pub ")?;
+            match field.name {
+                Some(ref name) => write!(dst, "{}", name),
+                None => write!(dst, "anon_{}", seq.next().unwrap()),
+            }?;
+            write!(dst, ": ")?;
+            write_type_ref(env, dst, &field.ty)?;
+            writeln!(dst, ",")?;
         }
     }
     writeln!(dst, "}}")?;
@@ -143,24 +140,11 @@ pub fn write_struct_def<'a>(
     Ok(())
 }
 
-pub fn write_struct_field<'a>(
-    env: &mut Env<'a>,
-    dst: &mut fmt::Write,
-    name: &str,
-    f: &Field<'a>,
-) -> fmt::Result {
-    write!(dst, "    pub {}: ", name)?;
-    write_type_ref(env, dst, &f.ty)?;
-    writeln!(dst, ",")?;
-
-    Ok(())
-}
-
 pub fn write_type_ref<'b, 'a: 'b>(
     env: &mut Env<'a>,
-    dst: &mut fmt::Write,
+    dst: &mut io::Write,
     ty: &'b QualType<'a>,
-) -> fmt::Result {
+) -> Result {
     match ty.ty {
         Type::Void => write!(dst, "c_void"),
         Type::Char => write!(dst, "c_char"),
@@ -194,18 +178,25 @@ use lang_c;
 #[cfg(test)]
 use super::{interpret_translation_unit, Alloc};
 
+#[cfg(test)]
+fn translate(s: &str) -> String {
+    let alloc = &Alloc::new();
+    let mut buf = Vec::new();
+    let parse = lang_c::driver::parse_preprocessed(&Default::default(), s.into()).unwrap();
+    let ir = interpret_translation_unit(alloc, &mut super::Env::new(), &parse.unit).unwrap();
+    write_translation_unit(&mut Default::default(), &mut buf, &ir).unwrap();
+    String::from_utf8(buf).unwrap()
+}
+
+#[cfg(test)]
+macro_rules! check {
+    ($a:expr, $b:expr) => (assert_eq!(translate($a), $b));
+}
+
 #[test]
 fn test_static() {
-    let alloc = &Alloc::new();
-    let parse = lang_c::driver::parse_preprocessed(
-        &Default::default(),
-        "typedef int *ip; static ip x;".into(),
-    ).unwrap();
-    let buf = &mut String::new();
-    let hir = interpret_translation_unit(alloc, &mut super::Env::new(), &parse.unit).unwrap();
-    write_translation_unit(&mut Default::default(), buf, &hir).unwrap();
-    assert_eq!(
-        &buf[..],
+    check!(
+        "typedef int *ip; static ip x;",
         "#[no_mangle]\n\
          pub static mut x: *mut c_int = std::mem::zeroed();\n"
     );
@@ -213,29 +204,14 @@ fn test_static() {
 
 #[test]
 fn test_extern() {
-    let alloc = &Alloc::new();
-    let parse =
-        lang_c::driver::parse_preprocessed(&Default::default(), "extern char x;".into()).unwrap();
-    let buf = &mut String::new();
-    let hir = interpret_translation_unit(alloc, &mut super::Env::new(), &parse.unit).unwrap();
-    write_translation_unit(&mut Default::default(), buf, &hir).unwrap();
-    assert_eq!(&buf[..], "extern { pub static mut x: c_char; }\n");
+    check!("extern char x;", "extern { pub static mut x: c_char; }\n");
 }
 
 #[test]
 fn test_struct() {
-    let alloc = &Alloc::new();
-    let parse = lang_c::driver::parse_preprocessed(
-        &Default::default(),
-        "extern struct a { int b; } c;".into(),
-    ).unwrap();
-    let buf = &mut String::new();
-    let hir = interpret_translation_unit(alloc, &mut super::Env::new(), &parse.unit).unwrap();
-    write_translation_unit(&mut Default::default(), buf, &hir).unwrap();
-    assert_eq!(
-        &buf[..],
-        "\
-         extern { pub static mut c: a; }\n\
+    check!(
+        "extern struct a { int b; } c;",
+        "extern { pub static mut c: a; }\n\
          #[repr(C)]\n\
          pub struct a {\n    pub b: c_int,\n}\n\
          "
