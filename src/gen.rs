@@ -82,7 +82,9 @@ pub fn write_variable<'a>(
             writeln!(dst, "#[no_mangle]")?;
             write!(dst, "pub static mut {}: ", var.name)?;
             write_type_ref(env, dst, &var.ty)?;
-            writeln!(dst, " = std::mem::zeroed();")?;
+            write!(dst, " = ")?;
+            write_zero_const(env, dst, &var.ty)?;
+            writeln!(dst, ";")?;
         }
         ItemMode::Opaque => {
             write!(dst, "extern {{ pub static mut {}: ", var.name)?;
@@ -91,6 +93,49 @@ pub fn write_variable<'a>(
         }
     }
     Ok(())
+}
+
+pub fn write_zero_const<'a>(env: &mut Env<'a>, dst: &mut io::Write, ty: &QualType<'a>) -> Result {
+    match ty.ty {
+        Type::Void => unimplemented!(),
+        Type::Char
+        | Type::SChar
+        | Type::UChar
+        | Type::SInt
+        | Type::UInt
+        | Type::SShort
+        | Type::UShort
+        | Type::SLong
+        | Type::ULong
+        | Type::SLongLong
+        | Type::ULongLong
+        | Type::Bool => write!(dst, "0"),
+        Type::Float | Type::Double => write!(dst, "0.0"),
+        Type::Struct(s) => {
+            write_struct_tag(env, dst, s)?;
+            write!(dst, " {{ ")?;
+            if let Some(ref fields) = *s.fields.borrow() {
+                let seq = &mut (0..);
+                for field in fields {
+                    match field.name {
+                        Some(ref name) => write!(dst, "{}", name),
+                        None => write!(dst, "anon_{}", seq.next().unwrap()),
+                    }?;
+                    write!(dst, ": ")?;
+                    write_zero_const(env, dst, &field.ty)?;
+
+                    if s.kind == StructKind::Union {
+                        return write!(dst, " }}");
+                    }
+
+                    write!(dst, ", ")?;
+                }
+            }
+            write!(dst, "}}")
+        }
+        Type::Pointer(_) => write!(dst, "0 as *mut _"),
+        _ => unimplemented!(),
+    }
 }
 
 fn write_struct_tag<'a>(env: &mut Env<'a>, dst: &mut io::Write, s: Ref<'a, Struct<'a>>) -> Result {
@@ -175,6 +220,8 @@ pub fn write_type_ref<'b, 'a: 'b>(
         Type::ULong => write!(dst, "c_ulong"),
         Type::SLongLong => write!(dst, "c_longlong"),
         Type::ULongLong => write!(dst, "c_ulonglong"),
+        Type::Float => write!(dst, "c_float"),
+        Type::Double => write!(dst, "c_double"),
         Type::Struct(s) => {
             env.backlog.push(Item {
                 mode: ItemMode::Translate,
@@ -215,7 +262,7 @@ fn test_static() {
     check!(
         "typedef int *ip; static ip x;",
         "#[no_mangle]\n\
-         pub static mut x: *mut c_int = std::mem::zeroed();\n"
+         pub static mut x: *mut c_int = 0 as *mut _;\n"
     );
 }
 
@@ -231,6 +278,26 @@ fn test_struct() {
         "extern { pub static mut c: a; }\n\
          #[repr(C)]\n\
          pub struct a {\n    pub b: c_int,\n}\n\
+         "
+    );
+}
+
+#[test]
+fn test_anon_struct() {
+    check!(
+        "struct { union { int a; float b; }; struct { int c, d; }; } v;",
+        "\
+         #[no_mangle]\n\
+         pub static mut v: Generated_0 = Generated_0 { \
+         anon_0: Generated_1 { a: 0 }, \
+         anon_1: Generated_2 { c: 0, d: 0, }, \
+         };\n\
+         #[repr(C)]\n\
+         pub struct Generated_0 {\n    pub anon_0: Generated_1,\n    pub anon_1: Generated_2,\n}\n\
+         #[repr(C)]\n\
+         pub struct Generated_2 {\n    pub c: c_int,\n    pub d: c_int,\n}\n\
+         #[repr(C)]\n\
+         pub union Generated_1 {\n    pub a: c_int,\n    pub b: c_float,\n}\n\
          "
     );
 }
