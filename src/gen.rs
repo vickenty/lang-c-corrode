@@ -1,4 +1,6 @@
 use std::io;
+use std::collections::hash_map::{Entry, HashMap};
+
 use super::{Declaration, Function, QualType, Ref, Struct, StructKind, Type, Variable};
 
 pub type Result = io::Result<()>;
@@ -6,6 +8,21 @@ pub type Result = io::Result<()>;
 #[derive(Default)]
 pub struct Env<'a> {
     backlog: Vec<Item<'a>>,
+    def_name: HashMap<usize, String>,
+    def_name_next: usize,
+}
+
+impl<'a> Env<'a> {
+    fn gen_name_for(&mut self, id: usize) -> &str {
+        match self.def_name.entry(id) {
+            Entry::Occupied(e) => e.into_mut(),
+            Entry::Vacant(e) => {
+                let name = format!("Generated_{}", self.def_name_next);
+                self.def_name_next += 1;
+                e.insert(name)
+            }
+        }
+    }
 }
 
 pub struct Item<'a> {
@@ -76,10 +93,10 @@ pub fn write_variable<'a>(
     Ok(())
 }
 
-fn write_struct_tag<'a>(_env: &mut Env<'a>, dst: &mut io::Write, s: Ref<'a, Struct<'a>>) -> Result {
+fn write_struct_tag<'a>(env: &mut Env<'a>, dst: &mut io::Write, s: Ref<'a, Struct<'a>>) -> Result {
     match s.tag {
         Some(ref tag) => write!(dst, "{}", tag),
-        None => write!(dst, "Gen{:x}", s.id()),
+        None => write!(dst, "{}", env.gen_name_for(s.id())),
     }
 }
 
