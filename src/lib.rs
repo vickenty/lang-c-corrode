@@ -1,14 +1,15 @@
 extern crate dynamic_arena;
 extern crate lang_c;
 
-pub mod gen;
-
 use std::fmt;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 use lang_c::ast;
 use lang_c::span::Node;
+
+pub mod gen;
+pub mod expr;
 
 pub type Error = &'static str;
 
@@ -253,6 +254,7 @@ pub struct Variable<'a> {
     name: String,
     defined: Cell<bool>,
     ty: QualType<'a>,
+    initial: RefCell<Option<Box<expr::Expression>>>,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -605,11 +607,10 @@ pub fn interpret_declaration<'a>(
 
         let name = name.expect("declaration with abstract declartor");
 
-        let value = init_declarator
-            .node
-            .initializer
-            .as_ref()
-            .map(|_init| unimplemented!());
+        let value = match init_declarator.node.initializer.as_ref() {
+            Some(v) => Some(expr::Expression::from_initializer(&v.node)?),
+            None => None,
+        };
 
         match (&qty.ty, is_typedef, value) {
             (_, true, None) => env.add_typedef(&name, qty.clone()),
@@ -640,7 +641,7 @@ pub fn interpret_declaration<'a>(
 
             (&Type::Function(_), false, Some(_)) => return Err("function is initialized"),
 
-            (_, false, _) => {
+            (_, false, value) => {
                 let is_extern = storage == Some(&ast::StorageClassSpecifier::Extern);
 
                 let var = match is_extern || file_scope {
@@ -659,6 +660,7 @@ pub fn interpret_declaration<'a>(
                             defined: false.into(),
                             name: name.clone(),
                             ty: qty.clone(),
+                            initial: None.into(),
                         });
                         env.add_variable(&name, var);
                         var
@@ -667,6 +669,8 @@ pub fn interpret_declaration<'a>(
 
                 var.defined
                     .set(var.defined.get() || !is_extern || value.is_some());
+                *var.initial.borrow_mut() = value;
+
                 res.push(Declaration::Variable(var));
             }
         }
@@ -773,6 +777,7 @@ fn test_decl() {
             Declaration::Variable(alloc.new_variable(Variable {
                 linkage: Linkage::External,
                 defined: false.into(),
+                initial: None.into(),
                 name: "x".into(),
                 ty: QualType {
                     volatile: false,
@@ -783,6 +788,7 @@ fn test_decl() {
             Declaration::Variable(alloc.new_variable(Variable {
                 linkage: Linkage::External,
                 defined: false.into(),
+                initial: None.into(),
                 name: "y".into(),
                 ty: QualType {
                     volatile: false,
@@ -806,6 +812,7 @@ fn test_external_def() {
     let x = alloc.new_variable(Variable {
         linkage: Linkage::Internal,
         defined: true.into(),
+        initial: None.into(),
         name: "x".into(),
         ty: QualType {
             volatile: false,
@@ -817,6 +824,7 @@ fn test_external_def() {
     let y = alloc.new_variable(Variable {
         linkage: Linkage::External,
         defined: false.into(),
+        initial: None.into(),
         name: "y".into(),
         ty: QualType {
             volatile: false,
@@ -828,6 +836,7 @@ fn test_external_def() {
     let z = alloc.new_variable(Variable {
         linkage: Linkage::External,
         defined: true.into(),
+        initial: None.into(),
         name: "z".into(),
         ty: QualType {
             volatile: false,
@@ -856,6 +865,31 @@ fn test_external_def() {
 }
 
 #[test]
+fn test_extern_init() {
+    let alloc = &Alloc::new();
+    assert_eq!(
+        interpret_decl_str(alloc, &mut Env::new(), "extern int a = 1;"),
+        Ok(vec![
+            Declaration::Variable(
+                alloc.new_variable(Variable {
+                    name: "a".into(),
+                    linkage: Linkage::External,
+                    defined: true.into(),
+                    initial: Some(
+                        expr::Expression::Constant(expr::Constant::Integer(1).into()).into(),
+                    ).into(),
+                    ty: QualType {
+                        volatile: false,
+                        constant: false,
+                        ty: Type::SInt,
+                    },
+                }),
+            ),
+        ])
+    );
+}
+
+#[test]
 fn test_typedef() {
     let alloc = &Alloc::new();
     let env = &mut Env::new();
@@ -865,6 +899,7 @@ fn test_typedef() {
             Declaration::Variable(alloc.new_variable(Variable {
                 linkage: Linkage::External,
                 defined: true.into(),
+                initial: None.into(),
                 name: "c".into(),
                 ty: QualType {
                     volatile: true,
@@ -875,6 +910,7 @@ fn test_typedef() {
             Declaration::Variable(alloc.new_variable(Variable {
                 linkage: Linkage::External,
                 defined: true.into(),
+                initial: None.into(),
                 name: "d".into(),
                 ty: QualType {
                     volatile: false,
@@ -1192,6 +1228,7 @@ fn test_function_ptr() {
                     name: "p".into(),
                     defined: true.into(),
                     linkage: Linkage::External,
+                    initial: None.into(),
                     ty: Type::Pointer(
                         FunctionTy {
                             variadic: true,
