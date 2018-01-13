@@ -2,7 +2,7 @@ use std::io;
 use std::ops::RangeFrom;
 use std::collections::hash_map::{Entry, HashMap};
 
-use super::{Declaration, Field, Function, QualType, Ref, Struct, StructKind, Type, Variable};
+use super::{Declaration, Field, Function, QualType, Ref, Struct, StructKind, Type, Unit, Variable};
 
 pub type Result = io::Result<()>;
 
@@ -46,9 +46,9 @@ pub enum ItemKind<'a> {
 pub fn write_translation_unit<'a>(
     env: &mut Env<'a>,
     dst: &mut io::Write,
-    decl_list: &[Declaration<'a>],
+    unit: &Unit<'a>,
 ) -> Result {
-    for decl in decl_list {
+    for decl in &unit.declarations {
         match *decl {
             Declaration::Variable(var) => env.backlog.push(Item {
                 mode: match var.defined.get() {

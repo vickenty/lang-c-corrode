@@ -236,6 +236,11 @@ enum TagDef<'a> {
     Struct(Ref<'a, Struct<'a>>),
 }
 
+#[derive(Debug)]
+pub struct Unit<'a> {
+    pub declarations: Vec<Declaration<'a>>,
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Declaration<'a> {
     Variable(Ref<'a, Variable<'a>>),
@@ -754,7 +759,7 @@ fn interpret_decl_str<'a>(
     let conf = &Default::default();
     let parse =
         lang_c::driver::parse_preprocessed(conf, decl_str.to_owned()).expect("syntax error");
-    interpret_translation_unit(alloc, env, &parse.unit)
+    interpret_translation_unit(alloc, env, &parse.unit).map(|u| u.declarations)
 }
 
 #[test]
@@ -1209,15 +1214,17 @@ pub fn interpret_translation_unit<'a>(
     alloc: &'a Alloc<'a>,
     env: &mut Env<'a>,
     unit: &ast::TranslationUnit,
-) -> Result<Vec<Declaration<'a>>, Error> {
-    let mut res = Vec::new();
+) -> Result<Unit<'a>, Error> {
+    let mut decls = Vec::new();
     for ed in &unit.0 {
         match ed.node {
             ast::ExternalDeclaration::Declaration(ref decl) => {
-                res.extend(interpret_declaration(alloc, env, true, decl)?)
+                decls.extend(interpret_declaration(alloc, env, true, decl)?)
             }
             _ => unimplemented!(),
         }
     }
-    Ok(res)
+    Ok(Unit {
+        declarations: decls,
+    })
 }
