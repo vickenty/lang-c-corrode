@@ -1,7 +1,8 @@
 use std::io;
+use std::ops::RangeFrom;
 use std::collections::hash_map::{Entry, HashMap};
 
-use super::{Declaration, Function, QualType, Ref, Struct, StructKind, Type, Variable};
+use super::{Declaration, Field, Function, QualType, Ref, Struct, StructKind, Type, Variable};
 
 pub type Result = io::Result<()>;
 
@@ -113,25 +114,9 @@ pub fn write_zero_const<'a>(env: &mut Env<'a>, dst: &mut io::Write, ty: &QualTyp
         Type::Float | Type::Double => write!(dst, "0.0"),
         Type::Struct(s) => {
             write_struct_tag(env, dst, s)?;
-            write!(dst, " {{ ")?;
-            if let Some(ref fields) = *s.fields.borrow() {
-                let seq = &mut (0..);
-                for field in fields {
-                    match field.name {
-                        Some(ref name) => write!(dst, "{}", name),
-                        None => write!(dst, "anon_{}", seq.next().unwrap()),
-                    }?;
-                    write!(dst, ": ")?;
-                    write_zero_const(env, dst, &field.ty)?;
-
-                    if s.kind == StructKind::Union {
-                        return write!(dst, " }}");
-                    }
-
-                    write!(dst, ", ")?;
-                }
-            }
-            write!(dst, "}}")
+            write_struct_fields(env, dst, false, s, &mut |env, dst, field| {
+                write_zero_const(env, dst, &field.ty)
+            })
         }
         Type::Pointer(_) => write!(dst, "0 as *mut _"),
         _ => unimplemented!(),
@@ -181,24 +166,58 @@ pub fn write_struct_def<'a>(
 
     write!(dst, "pub {} ", kind)?;
     write_struct_tag(env, dst, s)?;
+
+    write_struct_fields(env, dst, true, s, &mut |env, dst, field| {
+        write_type_ref(env, dst, &field.ty)
+    })?;
+
+    writeln!(dst)
+}
+
+fn write_struct_field<'a>(
+    seq: &mut RangeFrom<usize>,
+    env: &mut Env<'a>,
+    dst: &mut io::Write,
+    is_def: bool,
+    field: &Field<'a>,
+    f: &mut FnMut(&mut Env<'a>, &mut io::Write, &Field<'a>) -> Result,
+) -> Result {
+    if is_def {
+        write!(dst, "pub ")?;
+    }
+
+    match field.name {
+        Some(ref name) => write!(dst, "{}", name),
+        None => write!(dst, "anon_{}", seq.next().unwrap()),
+    }?;
+
+    write!(dst, ": ")?;
+    f(env, dst, field)?;
+    writeln!(dst, ",")
+}
+
+fn write_struct_fields<'a>(
+    env: &mut Env<'a>,
+    dst: &mut io::Write,
+    is_def: bool,
+    s: Ref<'a, Struct<'a>>,
+    f: &mut FnMut(&mut Env<'a>, &mut io::Write, &Field<'a>) -> Result,
+) -> Result {
+    let seq = &mut (0..);
+
     writeln!(dst, " {{")?;
 
     if let Some(ref fields) = *s.fields.borrow() {
-        let seq = &mut (0..);
-
         for field in fields {
-            write!(dst, "    pub ")?;
-            match field.name {
-                Some(ref name) => write!(dst, "{}", name),
-                None => write!(dst, "anon_{}", seq.next().unwrap()),
-            }?;
-            write!(dst, ": ")?;
-            write_type_ref(env, dst, &field.ty)?;
-            writeln!(dst, ",")?;
+            write_struct_field(seq, env, dst, is_def, &*field, f)?;
+
+            if !is_def && s.kind == StructKind::Union {
+                break;
+            }
         }
     }
-    writeln!(dst, "}}")?;
 
+    write!(dst, "}}")?;
     Ok(())
 }
 
@@ -277,7 +296,7 @@ fn test_struct() {
         "extern struct a { int b; } c;",
         "extern { pub static mut c: a; }\n\
          #[repr(C)]\n\
-         pub struct a {\n    pub b: c_int,\n}\n\
+         pub struct a {\npub b: c_int,\n}\n\
          "
     );
 }
@@ -288,16 +307,16 @@ fn test_anon_struct() {
         "struct { union { int a; float b; }; struct { int c, d; }; } v;",
         "\
          #[no_mangle]\n\
-         pub static mut v: Generated_0 = Generated_0 { \
-         anon_0: Generated_1 { a: 0 }, \
-         anon_1: Generated_2 { c: 0, d: 0, }, \
+         pub static mut v: Generated_0 = Generated_0 {\n\
+         anon_0: Generated_1 {\na: 0,\n},\n\
+         anon_1: Generated_2 {\nc: 0,\nd: 0,\n},\n\
          };\n\
          #[repr(C)]\n\
-         pub struct Generated_0 {\n    pub anon_0: Generated_1,\n    pub anon_1: Generated_2,\n}\n\
+         pub struct Generated_0 {\npub anon_0: Generated_1,\npub anon_1: Generated_2,\n}\n\
          #[repr(C)]\n\
-         pub struct Generated_2 {\n    pub c: c_int,\n    pub d: c_int,\n}\n\
+         pub struct Generated_2 {\npub c: c_int,\npub d: c_int,\n}\n\
          #[repr(C)]\n\
-         pub union Generated_1 {\n    pub a: c_int,\n    pub b: c_float,\n}\n\
+         pub union Generated_1 {\npub a: c_int,\npub b: c_float,\n}\n\
          "
     );
 }
