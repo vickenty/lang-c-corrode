@@ -2,6 +2,7 @@ use std::io;
 use std::ops::RangeFrom;
 use std::collections::hash_map::{Entry, HashMap};
 
+use super::expr;
 use super::{Declaration, Field, Function, QualType, Ref, Struct, StructKind, Type, Unit, Variable};
 
 pub type Result = io::Result<()>;
@@ -84,7 +85,10 @@ pub fn write_variable<'a>(
             write!(dst, "pub static mut {}: ", var.name)?;
             write_type_ref(env, dst, &var.ty)?;
             write!(dst, " = ")?;
-            write_zero_const(env, dst, &var.ty)?;
+            match *var.initial.borrow() {
+                Some(ref expr) => write_expr(env, dst, expr)?,
+                None => write_zero_const(env, dst, &var.ty)?,
+            }
             writeln!(dst, ";")?;
         }
         ItemMode::Opaque => {
@@ -120,6 +124,21 @@ pub fn write_zero_const<'a>(env: &mut Env<'a>, dst: &mut io::Write, ty: &QualTyp
         }
         Type::Pointer(_) => write!(dst, "0 as *mut _"),
         _ => unimplemented!(),
+    }
+}
+
+
+
+pub fn write_expr<'a>(env: &mut Env<'a>, dst: &mut io::Write, expr: &expr::Expression) -> Result {
+    match *expr {
+        expr::Expression::Constant(ref c) => write_const(env, dst, c),
+    }
+}
+
+pub fn write_const<'a>(_: &mut Env<'a>, dst: &mut io::Write, c: &expr::Constant) -> Result {
+    match *c {
+        expr::Constant::Integer(i) => write!(dst, "{}", i),
+        expr::Constant::Float(f) => write!(dst, "{}", f),
     }
 }
 
@@ -318,5 +337,14 @@ fn test_anon_struct() {
          #[repr(C)]\n\
          pub union Generated_1 {\npub a: c_int,\npub b: c_float,\n}\n\
          "
+    );
+}
+
+#[test]
+fn test_int_init() {
+    check!(
+        "extern int a = 1;",
+        "#[no_mangle]\n\
+        pub static mut a: c_int = 1;\n"
     );
 }
