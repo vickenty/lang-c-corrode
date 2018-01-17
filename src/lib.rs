@@ -1,5 +1,7 @@
 extern crate dynamic_arena;
 extern crate lang_c;
+#[cfg(test)]
+extern crate syn;
 
 use std::fmt;
 use std::cell::{Cell, RefCell};

@@ -311,7 +311,7 @@ pub fn write_type_ref<'a>(env: &mut Env<'a>, dst: &mut io::Write, ty: &Type<'a>)
 }
 
 #[cfg(test)]
-use lang_c;
+use {lang_c, syn};
 #[cfg(test)]
 use super::{interpret_translation_unit, Alloc};
 
@@ -322,7 +322,9 @@ fn translate(s: &str) -> String {
     let parse = lang_c::driver::parse_preprocessed(&Default::default(), s.into()).unwrap();
     let ir = interpret_translation_unit(alloc, &mut super::Env::new(), &parse.unit).unwrap();
     write_translation_unit(&mut Default::default(), &mut buf, &ir).unwrap();
-    String::from_utf8(buf).unwrap()
+    let s = String::from_utf8(buf).unwrap();
+    syn::parse_str::<syn::File>(&s).unwrap();
+    s
 }
 
 #[cfg(test)]
