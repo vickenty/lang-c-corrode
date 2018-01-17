@@ -83,17 +83,17 @@ pub fn write_variable<'a>(
         ItemMode::Translate => {
             writeln!(dst, "#[no_mangle]")?;
             write!(dst, "pub static mut {}: ", var.name)?;
-            write_type_ref(env, dst, &var.ty)?;
+            write_type_ref(env, dst, &var.ty.ty)?;
             write!(dst, " = ")?;
             match *var.initial.borrow() {
-                Some(ref expr) => write_expr(env, dst, expr)?,
+                Some(ref expr) => write_expr_as_ty(env, dst, expr, &var.ty.ty)?,
                 None => write_zero_const(env, dst, &var.ty)?,
             }
             writeln!(dst, ";")?;
         }
         ItemMode::Opaque => {
             write!(dst, "extern {{ pub static mut {}: ", var.name)?;
-            write_type_ref(env, dst, &var.ty)?;
+            write_type_ref(env, dst, &var.ty.ty)?;
             writeln!(dst, "; }}")?;
         }
     }
@@ -127,19 +127,58 @@ pub fn write_zero_const<'a>(env: &mut Env<'a>, dst: &mut io::Write, ty: &QualTyp
     }
 }
 
+pub fn write_expr_as_ty<'a>(
+    env: &mut Env<'a>,
+    dst: &mut io::Write,
+    expr: &expr::Expression<'a>,
+    ty: &Type<'a>,
+) -> Result {
+    if expr.ty() != ty {
+        write_cast_expr(env, dst, ty, |env, dst| write_expr(env, dst, expr))
+    } else {
+        write_expr(env, dst, expr)
+    }
+}
 
-
-pub fn write_expr<'a>(env: &mut Env<'a>, dst: &mut io::Write, expr: &expr::Expression) -> Result {
+pub fn write_expr<'a>(
+    env: &mut Env<'a>,
+    dst: &mut io::Write,
+    expr: &expr::Expression<'a>,
+) -> Result {
     match *expr {
         expr::Expression::Constant(ref c) => write_const(env, dst, c),
     }
 }
 
-pub fn write_const<'a>(_: &mut Env<'a>, dst: &mut io::Write, c: &expr::Constant) -> Result {
+pub fn write_const<'a>(env: &mut Env<'a>, dst: &mut io::Write, c: &expr::Constant<'a>) -> Result {
     match *c {
-        expr::Constant::Integer(i) => write!(dst, "{}", i),
-        expr::Constant::Float(f) => write!(dst, "{}", f),
+        expr::Constant::Integer(ref i) => {
+            write_cast_expr(env, dst, &i.ty, |_, dst| {
+                match i.base {
+                    expr::IntegerBase::Octal => write!(dst, "0o")?,
+                    expr::IntegerBase::Hexademical => write!(dst, "0x")?,
+                    expr::IntegerBase::Decimal => (),
+                }
+                write!(dst, "{}", i.number)
+            })?;
+        }
+
+        expr::Constant::Float(ref f) => {
+            write_cast_expr(env, dst, &f.ty, |_, dst| write!(dst, "{}", f.number))?;
+        }
     }
+    Ok(())
+}
+
+fn write_cast_expr<'a, F>(env: &mut Env<'a>, dst: &mut io::Write, ty: &Type<'a>, mut f: F) -> Result
+where
+    F: FnMut(&mut Env<'a>, &mut io::Write) -> Result,
+{
+    write!(dst, "(")?;
+    f(env, dst)?;
+    write!(dst, ") as ")?;
+    write_type_ref(env, dst, ty)?;
+    Ok(())
 }
 
 fn write_struct_tag<'a>(env: &mut Env<'a>, dst: &mut io::Write, s: Ref<'a, Struct<'a>>) -> Result {
@@ -187,7 +226,7 @@ pub fn write_struct_def<'a>(
     write_struct_tag(env, dst, s)?;
 
     write_struct_fields(env, dst, true, s, &mut |env, dst, field| {
-        write_type_ref(env, dst, &field.ty)
+        write_type_ref(env, dst, &field.ty.ty)
     })?;
 
     writeln!(dst)
@@ -240,12 +279,8 @@ fn write_struct_fields<'a>(
     Ok(())
 }
 
-pub fn write_type_ref<'b, 'a: 'b>(
-    env: &mut Env<'a>,
-    dst: &mut io::Write,
-    ty: &'b QualType<'a>,
-) -> Result {
-    match ty.ty {
+pub fn write_type_ref<'a>(env: &mut Env<'a>, dst: &mut io::Write, ty: &Type<'a>) -> Result {
+    match *ty {
         Type::Void => write!(dst, "c_void"),
         Type::Char => write!(dst, "c_char"),
         Type::SChar => write!(dst, "c_schar"),
@@ -269,7 +304,7 @@ pub fn write_type_ref<'b, 'a: 'b>(
         }
         Type::Pointer(ref ty) => {
             write!(dst, "*mut ")?;
-            write_type_ref(env, dst, ty)
+            write_type_ref(env, dst, &ty.ty)
         }
         _ => unimplemented!(),
     }
@@ -345,6 +380,45 @@ fn test_int_init() {
     check!(
         "extern int a = 1;",
         "#[no_mangle]\n\
-        pub static mut a: c_int = 1;\n"
+         pub static mut a: c_int = (1) as c_int;\n"
+    );
+    check!(
+        "unsigned long long a = 1llu;",
+        "#[no_mangle]\n\
+         pub static mut a: c_ulonglong = (1) as c_ulonglong;\n"
+    );
+}
+
+#[test]
+fn test_int_const_expand() {
+    use std::os::raw::{c_int, c_long, c_uint};
+    use std::mem::size_of;
+
+    if size_of::<c_int>() < size_of::<c_long>() {
+        let num = c_int::max_value() as c_uint + 1;
+        let c_src = format!("int a = {};", num);
+        let r_src = format!(
+            "#[no_mangle]\npub static mut a: c_int = (({}) as c_long) as c_int;\n",
+            num
+        );
+        check!(&c_src[..], &r_src[..]);
+    }
+}
+
+#[test]
+fn float_const() {
+    check!(
+        "double f = 0.1;",
+        "#[no_mangle]\npub static mut f: c_double = (0.1) as c_double;\n"
+    );
+
+    check!(
+        "float f = 0.1f;",
+        "#[no_mangle]\npub static mut f: c_float = (0.1) as c_float;\n"
+    );
+
+    check!(
+        "double f = 0.1f;",
+        "#[no_mangle]\npub static mut f: c_double = ((0.1) as c_float) as c_double;\n"
     );
 }

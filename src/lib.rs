@@ -254,7 +254,7 @@ pub struct Variable<'a> {
     name: String,
     defined: Cell<bool>,
     ty: QualType<'a>,
-    initial: RefCell<Option<Box<expr::Expression>>>,
+    initial: RefCell<Option<Box<expr::Expression<'a>>>>,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -876,7 +876,13 @@ fn test_extern_init() {
                     linkage: Linkage::External,
                     defined: true.into(),
                     initial: Some(
-                        expr::Expression::Constant(expr::Constant::Integer(1).into()).into(),
+                        expr::Expression::Constant(
+                            expr::Constant::Integer(expr::Integer {
+                                base: expr::IntegerBase::Decimal,
+                                ty: Type::SInt,
+                                number: "1".into(),
+                            }).into(),
+                        ).into(),
                     ).into(),
                     ty: QualType {
                         volatile: false,
