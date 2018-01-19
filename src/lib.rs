@@ -352,7 +352,7 @@ enum Sign {
     Unsigned,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 enum TypeKind<'a> {
     Void,
     Char,
@@ -435,8 +435,8 @@ impl<'a> TypeBuilder<'a> {
             _ => unimplemented!(),
         }
 
-        if new_kind != None {
-            if self.kind == None {
+        if new_kind.is_some() {
+            if self.kind.is_none() {
                 self.kind = new_kind;
             } else {
                 return Err("two or more data types in a declaration");
@@ -486,7 +486,7 @@ impl<'a> TypeBuilder<'a> {
             (TypeKind::Bool, 0, 0, Sign::None) => Type::Bool,
 
             (TypeKind::Typedef(ref name), 0, 0, Sign::None) => {
-                let mut qty = Clone::clone(env.lookup_typedef(name)?);
+                let mut qty = env.lookup_typedef(name)?.clone();
                 qty.volatile |= self.volatile;
                 qty.constant |= self.constant;
                 return Ok(qty);
