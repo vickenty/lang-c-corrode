@@ -1,4 +1,6 @@
 use std::io;
+use std::io::Write;
+use std::fmt;
 use std::ops::RangeFrom;
 use std::collections::hash_map::{Entry, HashMap};
 
@@ -12,6 +14,13 @@ pub struct Env<'a, 'w> {
     backlog: Vec<Item<'a>>,
     def_name: HashMap<usize, String>,
     def_name_next: usize,
+}
+
+impl<'a, 'w> io::Write for Env<'a, 'w> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> { self.output.write(buf) }
+    fn flush(&mut self) -> io::Result<()> { self.output.flush() }
+    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> { self.output.write_all(buf) }
+    fn write_fmt(&mut self, fmt: fmt::Arguments) -> io::Result<()> { self.output.write_fmt(fmt) }
 }
 
 impl<'a, 'w> Env<'a, 'w> {
@@ -66,9 +75,9 @@ pub fn write_variable<'a, 'w>(env: &mut Env<'a, 'w>, var: Ref<'a, Variable<'a>>)
 
 fn write_static_define<'a, 'w>(env: &mut Env<'a, 'w>, var: Ref<'a, Variable<'a>>) -> Result {
     writeln!(env.output, "#[no_mangle]")?;
-    write!(env.output, "pub static mut {}: ", var.name)?;
+    write!(env, "pub static mut {}: ", var.name)?;
     write_type_ref(env, &var.ty.ty)?;
-    write!(env.output, " = ")?;
+    write!(env, " = ")?;
     match *var.initial.borrow() {
         Some(ref expr) => write_expr_as_ty(env, expr, &var.ty.ty)?,
         None => write_zero_const(env, &var.ty)?,
@@ -77,7 +86,7 @@ fn write_static_define<'a, 'w>(env: &mut Env<'a, 'w>, var: Ref<'a, Variable<'a>>
 }
 
 fn write_static_extern<'a, 'w>(env: &mut Env<'a, 'w>, var: Ref<'a, Variable<'a>>) -> Result {
-    write!(env.output, "extern {{ pub static mut {}: ", var.name)?;
+    write!(env, "extern {{ pub static mut {}: ", var.name)?;
     write_type_ref(env, &var.ty.ty)?;
     writeln!(env.output, "; }}")
 }
@@ -96,8 +105,8 @@ pub fn write_zero_const<'a, 'w>(env: &mut Env<'a, 'w>, ty: &QualType<'a>) -> Res
         | Type::ULong
         | Type::SLongLong
         | Type::ULongLong
-        | Type::Bool => write!(env.output, "0"),
-        Type::Float | Type::Double => write!(env.output, "0.0"),
+        | Type::Bool => write!(env, "0"),
+        Type::Float | Type::Double => write!(env, "0.0"),
         Type::Struct(s) => {
             write_struct_tag(env, s)?;
             write_struct_fields(
@@ -107,7 +116,7 @@ pub fn write_zero_const<'a, 'w>(env: &mut Env<'a, 'w>, ty: &QualType<'a>) -> Res
                 &mut |env, field| write_zero_const(env, &field.ty),
             )
         }
-        Type::Pointer(_) => write!(env.output, "0 as *mut _"),
+        Type::Pointer(_) => write!(env, "0 as *mut _"),
         _ => unimplemented!(),
     }
 }
@@ -135,16 +144,16 @@ pub fn write_const<'a, 'w>(env: &mut Env<'a, 'w>, c: &expr::Constant<'a>) -> Res
         expr::Constant::Integer(ref i) => {
             write_cast_expr(env, &i.ty, |env| {
                 match i.base {
-                    expr::IntegerBase::Octal => write!(env.output, "0o")?,
-                    expr::IntegerBase::Hexademical => write!(env.output, "0x")?,
+                    expr::IntegerBase::Octal => write!(env, "0o")?,
+                    expr::IntegerBase::Hexademical => write!(env, "0x")?,
                     expr::IntegerBase::Decimal => (),
                 }
-                write!(env.output, "{}", i.number)
+                write!(env, "{}", i.number)
             })?;
         }
 
         expr::Constant::Float(ref f) => {
-            write_cast_expr(env, &f.ty, |env| write!(env.output, "{}", f.number))?;
+            write_cast_expr(env, &f.ty, |env| write!(env, "{}", f.number))?;
         }
     }
     Ok(())
@@ -154,16 +163,16 @@ fn write_cast_expr<'a, 'w, F>(env: &mut Env<'a, 'w>, ty: &Type<'a>, mut f: F) ->
 where
     F: FnMut(&mut Env<'a, 'w>) -> Result,
 {
-    write!(env.output, "(")?;
+    write!(env, "(")?;
     f(env)?;
-    write!(env.output, ") as ")?;
+    write!(env, ") as ")?;
     write_type_ref(env, ty)?;
     Ok(())
 }
 
 fn write_struct_tag<'a, 'w>(env: &mut Env<'a, 'w>, s: Ref<'a, Struct<'a>>) -> Result {
     match s.tag {
-        Some(ref tag) => write!(env.output, "{}", tag),
+        Some(ref tag) => write!(env, "{}", tag),
         None => env.gen_name_for(s.id()),
     }
 }
@@ -177,7 +186,7 @@ pub fn write_struct<'a, 'w>(env: &mut Env<'a, 'w>, s: Ref<'a, Struct<'a>>) -> Re
 }
 
 pub fn write_struct_opaque<'a, 'w>(env: &mut Env<'a, 'w>, s: Ref<'a, Struct<'a>>) -> Result {
-    write!(env.output, "pub enum ")?;
+    write!(env, "pub enum ")?;
     write_struct_tag(env, s)?;
     writeln!(env.output, "{{}}")
 }
@@ -190,7 +199,7 @@ pub fn write_struct_def<'a, 'w>(env: &mut Env<'a, 'w>, s: Ref<'a, Struct<'a>>) -
 
     writeln!(env.output, "#[repr(C)]")?;
 
-    write!(env.output, "pub {} ", kind)?;
+    write!(env, "pub {} ", kind)?;
     write_struct_tag(env, s)?;
 
     write_struct_fields(
@@ -211,15 +220,15 @@ fn write_struct_field<'a, 'w>(
     f: &mut FnMut(&mut Env<'a, 'w>, &Field<'a>) -> Result,
 ) -> Result {
     if is_def {
-        write!(env.output, "pub ")?;
+        write!(env, "pub ")?;
     }
 
     match field.name {
-        Some(ref name) => write!(env.output, "{}", name),
-        None => write!(env.output, "anon_{}", seq.next().unwrap()),
+        Some(ref name) => write!(env, "{}", name),
+        None => write!(env, "anon_{}", seq.next().unwrap()),
     }?;
 
-    write!(env.output, ": ")?;
+    write!(env, ": ")?;
     f(env, field)?;
     writeln!(env.output, ",")
 }
@@ -244,32 +253,32 @@ fn write_struct_fields<'a, 'w>(
         }
     }
 
-    write!(env.output, "}}")?;
+    write!(env, "}}")?;
     Ok(())
 }
 
 pub fn write_type_ref<'a, 'w>(env: &mut Env<'a, 'w>, ty: &Type<'a>) -> Result {
     match *ty {
-        Type::Void => write!(env.output, "c_void"),
-        Type::Char => write!(env.output, "c_char"),
-        Type::SChar => write!(env.output, "c_schar"),
-        Type::UChar => write!(env.output, "c_uchar"),
-        Type::SInt => write!(env.output, "c_int"),
-        Type::UInt => write!(env.output, "c_uint"),
-        Type::SShort => write!(env.output, "c_short"),
-        Type::UShort => write!(env.output, "c_ushort"),
-        Type::SLong => write!(env.output, "c_long"),
-        Type::ULong => write!(env.output, "c_ulong"),
-        Type::SLongLong => write!(env.output, "c_longlong"),
-        Type::ULongLong => write!(env.output, "c_ulonglong"),
-        Type::Float => write!(env.output, "c_float"),
-        Type::Double => write!(env.output, "c_double"),
+        Type::Void => write!(env, "c_void"),
+        Type::Char => write!(env, "c_char"),
+        Type::SChar => write!(env, "c_schar"),
+        Type::UChar => write!(env, "c_uchar"),
+        Type::SInt => write!(env, "c_int"),
+        Type::UInt => write!(env, "c_uint"),
+        Type::SShort => write!(env, "c_short"),
+        Type::UShort => write!(env, "c_ushort"),
+        Type::SLong => write!(env, "c_long"),
+        Type::ULong => write!(env, "c_ulong"),
+        Type::SLongLong => write!(env, "c_longlong"),
+        Type::ULongLong => write!(env, "c_ulonglong"),
+        Type::Float => write!(env, "c_float"),
+        Type::Double => write!(env, "c_double"),
         Type::Struct(s) => {
             env.backlog.push(Item::Struct(s));
             write_struct_tag(env, s)
         }
         Type::Pointer(ref ty) => {
-            write!(env.output, "*mut ")?;
+            write!(env, "*mut ")?;
             write_type_ref(env, &ty.ty)
         }
         _ => unimplemented!(),
