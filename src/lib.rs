@@ -241,13 +241,14 @@ enum TagDef<'a> {
 
 #[derive(Debug)]
 pub struct Unit<'a> {
-    pub declarations: Vec<Declaration<'a>>,
+    pub items: Vec<Item<'a>>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum Declaration<'a> {
+pub enum Item<'a> {
     Variable(Ref<'a, Variable<'a>>),
-    FunctionDeclaration(Ref<'a, Function<'a>>),
+    Function(Ref<'a, Function<'a>>),
+    Struct(Ref<'a, Struct<'a>>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -257,6 +258,12 @@ pub struct Variable<'a> {
     defined: Cell<bool>,
     ty: QualType<'a>,
     initial: RefCell<Option<Box<expr::Expression<'a>>>>,
+}
+
+impl<'a> Variable<'a> {
+    pub fn is_defined(&self) -> bool {
+        self.defined.get()
+    }
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -547,7 +554,7 @@ pub fn interpret_declaration<'a>(
     env: &mut Env<'a>,
     file_scope: bool,
     decl: &Node<ast::Declaration>,
-) -> Result<Vec<Declaration<'a>>, Error> {
+) -> Result<Vec<Item<'a>>, Error> {
     let mut builder = TypeBuilder::new();
     let mut storage = None;
     let mut inline = false;
@@ -638,7 +645,7 @@ pub fn interpret_declaration<'a>(
                     }
                 };
 
-                res.push(Declaration::FunctionDeclaration(fun));
+                res.push(Item::Function(fun));
             }
 
             (&Type::Function(_), false, Some(_)) => return Err("function is initialized"),
@@ -673,7 +680,7 @@ pub fn interpret_declaration<'a>(
                     .set(var.defined.get() || !is_extern || value.is_some());
                 *var.initial.borrow_mut() = value;
 
-                res.push(Declaration::Variable(var));
+                res.push(Item::Variable(var));
             }
         }
     }
@@ -761,11 +768,11 @@ fn interpret_decl_str<'a>(
     alloc: &'a Alloc<'a>,
     env: &mut Env<'a>,
     decl_str: &str,
-) -> Result<Vec<Declaration<'a>>, Error> {
+) -> Result<Vec<Item<'a>>, Error> {
     let conf = &Default::default();
     let parse =
         lang_c::driver::parse_preprocessed(conf, decl_str.to_owned()).expect("syntax error");
-    interpret_translation_unit(alloc, env, &parse.unit).map(|u| u.declarations)
+    interpret_translation_unit(alloc, env, &parse.unit).map(|u| u.items)
 }
 
 #[test]
@@ -776,7 +783,7 @@ fn test_decl() {
     assert_eq!(
         interpret_decl_str(alloc, env, "extern int x, * const y;"),
         Ok(vec![
-            Declaration::Variable(alloc.new_variable(Variable {
+            Item::Variable(alloc.new_variable(Variable {
                 linkage: Linkage::External,
                 defined: false.into(),
                 initial: None.into(),
@@ -787,7 +794,7 @@ fn test_decl() {
                     ty: Type::SInt,
                 },
             })),
-            Declaration::Variable(alloc.new_variable(Variable {
+            Item::Variable(alloc.new_variable(Variable {
                 linkage: Linkage::External,
                 defined: false.into(),
                 initial: None.into(),
@@ -856,12 +863,12 @@ fn test_external_def() {
              extern int z; int z;"
         ),
         Ok(vec![
-            Declaration::Variable(x),
-            Declaration::Variable(x),
-            Declaration::Variable(y),
-            Declaration::Variable(y),
-            Declaration::Variable(z),
-            Declaration::Variable(z),
+            Item::Variable(x),
+            Item::Variable(x),
+            Item::Variable(y),
+            Item::Variable(y),
+            Item::Variable(z),
+            Item::Variable(z),
         ])
     );
 }
@@ -872,7 +879,7 @@ fn test_extern_init() {
     assert_eq!(
         interpret_decl_str(alloc, &mut Env::new(), "extern int a = 1;"),
         Ok(vec![
-            Declaration::Variable(
+            Item::Variable(
                 alloc.new_variable(Variable {
                     name: "a".into(),
                     linkage: Linkage::External,
@@ -904,7 +911,7 @@ fn test_typedef() {
     assert_eq!(
         interpret_decl_str(alloc, env, "volatile int typedef a, *b; a c; const b d;"),
         Ok(vec![
-            Declaration::Variable(alloc.new_variable(Variable {
+            Item::Variable(alloc.new_variable(Variable {
                 linkage: Linkage::External,
                 defined: true.into(),
                 initial: None.into(),
@@ -915,7 +922,7 @@ fn test_typedef() {
                     ty: Type::SInt,
                 },
             })),
-            Declaration::Variable(alloc.new_variable(Variable {
+            Item::Variable(alloc.new_variable(Variable {
                 linkage: Linkage::External,
                 defined: true.into(),
                 initial: None.into(),
@@ -941,7 +948,7 @@ fn test_typedef_fn() {
     assert_eq!(
         interpret_decl_str(alloc, env, "typedef int foo(); foo a;"),
         Ok(vec![
-            Declaration::FunctionDeclaration(alloc.new_function(Function {
+            Item::Function(alloc.new_function(Function {
                 linkage: Linkage::External,
                 name: "a".into(),
                 inline: false.into(),
@@ -970,6 +977,10 @@ impl<'a> Struct<'a> {
             tag: tag,
             fields: RefCell::new(None),
         }
+    }
+
+    pub fn is_complete_ty(&self) -> bool {
+        self.fields.borrow().is_some()
     }
 }
 
@@ -1091,7 +1102,7 @@ fn test_struct() {
     assert!(decls.len() == 1);
     let decl = decls.get(0).unwrap();
     let head = match *decl {
-        Declaration::Variable(v) => v,
+        Item::Variable(v) => v,
         _ => panic!("not a variable"),
     };
 
@@ -1231,7 +1242,7 @@ fn test_function_ptr() {
     assert_eq!(
         interpret_decl_str(alloc, &mut Env::new(), "int (*p)(int, ...);"),
         Ok(vec![
-            Declaration::Variable(
+            Item::Variable(
                 alloc.new_variable(Variable {
                     name: "p".into(),
                     defined: true.into(),
@@ -1260,16 +1271,18 @@ pub fn interpret_translation_unit<'a>(
     env: &mut Env<'a>,
     unit: &ast::TranslationUnit,
 ) -> Result<Unit<'a>, Error> {
-    let mut decls = Vec::new();
+    let mut items = Vec::new();
+
     for ed in &unit.0 {
         match ed.node {
             ast::ExternalDeclaration::Declaration(ref decl) => {
-                decls.extend(interpret_declaration(alloc, env, true, decl)?)
+                items.extend(interpret_declaration(alloc, env, true, decl)?)
             }
             _ => unimplemented!(),
         }
     }
+
     Ok(Unit {
-        declarations: decls,
+        items: items,
     })
 }

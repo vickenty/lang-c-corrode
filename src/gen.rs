@@ -3,7 +3,7 @@ use std::ops::RangeFrom;
 use std::collections::hash_map::{Entry, HashMap};
 
 use super::expr;
-use super::{Declaration, Field, Function, QualType, Ref, Struct, StructKind, Type, Unit, Variable};
+use super::{Field, Item, QualType, Ref, Struct, StructKind, Type, Unit, Variable};
 
 pub type Result = io::Result<()>;
 
@@ -27,77 +27,66 @@ impl<'a> Env<'a> {
     }
 }
 
-pub struct Item<'a> {
-    mode: ItemMode,
-    kind: ItemKind<'a>,
-}
-
-#[derive(Clone, Copy)]
-pub enum ItemMode {
-    Opaque,
-    Translate,
-}
-
-pub enum ItemKind<'a> {
-    Variable(Ref<'a, Variable<'a>>),
-    Function(Ref<'a, Function<'a>>),
-    Struct(Ref<'a, Struct<'a>>),
-}
-
 pub fn write_translation_unit<'a>(
     env: &mut Env<'a>,
     dst: &mut io::Write,
     unit: &Unit<'a>,
 ) -> Result {
-    for decl in &unit.declarations {
-        match *decl {
-            Declaration::Variable(var) => env.backlog.push(Item {
-                mode: match var.defined.get() {
-                    true => ItemMode::Translate,
-                    false => ItemMode::Opaque,
-                },
-                kind: ItemKind::Variable(var),
-            }),
-            Declaration::FunctionDeclaration(_) => unimplemented!(),
-        }
+    for item in &unit.items {
+        write_item(env, dst, item)?;
     }
 
     while let Some(item) = env.backlog.pop() {
-        match item.kind {
-            ItemKind::Struct(s) => write_struct(env, dst, item.mode, s)?,
-            ItemKind::Variable(var) => write_variable(env, dst, item.mode, var)?,
-            ItemKind::Function(_) => unimplemented!(),
-        }
+        write_item(env, dst, &item)?;
     }
 
     Ok(())
 }
 
+pub fn write_item<'a>(env: &mut Env<'a>, dst: &mut io::Write, item: &Item<'a>) -> Result {
+    match *item {
+        Item::Struct(s) => write_struct(env, dst, s),
+        Item::Variable(var) => write_variable(env, dst, var),
+        Item::Function(_) => unimplemented!(),
+    }
+}
+
 pub fn write_variable<'a>(
     env: &mut Env<'a>,
     dst: &mut io::Write,
-    mode: ItemMode,
     var: Ref<'a, Variable<'a>>,
 ) -> Result {
-    match mode {
-        ItemMode::Translate => {
-            writeln!(dst, "#[no_mangle]")?;
-            write!(dst, "pub static mut {}: ", var.name)?;
-            write_type_ref(env, dst, &var.ty.ty)?;
-            write!(dst, " = ")?;
-            match *var.initial.borrow() {
-                Some(ref expr) => write_expr_as_ty(env, dst, expr, &var.ty.ty)?,
-                None => write_zero_const(env, dst, &var.ty)?,
-            }
-            writeln!(dst, ";")?;
-        }
-        ItemMode::Opaque => {
-            write!(dst, "extern {{ pub static mut {}: ", var.name)?;
-            write_type_ref(env, dst, &var.ty.ty)?;
-            writeln!(dst, "; }}")?;
-        }
+    if var.is_defined() {
+        write_static_define(env, dst, var)
+    } else {
+        write_static_extern(env, dst, var)
     }
-    Ok(())
+}
+
+fn write_static_define<'a>(
+    env: &mut Env<'a>,
+    dst: &mut io::Write,
+    var: Ref<'a, Variable<'a>>,
+) -> Result {
+    writeln!(dst, "#[no_mangle]")?;
+    write!(dst, "pub static mut {}: ", var.name)?;
+    write_type_ref(env, dst, &var.ty.ty)?;
+    write!(dst, " = ")?;
+    match *var.initial.borrow() {
+        Some(ref expr) => write_expr_as_ty(env, dst, expr, &var.ty.ty)?,
+        None => write_zero_const(env, dst, &var.ty)?,
+    }
+    writeln!(dst, ";")
+}
+
+fn write_static_extern<'a>(
+    env: &mut Env<'a>,
+    dst: &mut io::Write,
+    var: Ref<'a, Variable<'a>>,
+) -> Result {
+    write!(dst, "extern {{ pub static mut {}: ", var.name)?;
+    write_type_ref(env, dst, &var.ty.ty)?;
+    writeln!(dst, "; }}")
 }
 
 pub fn write_zero_const<'a>(env: &mut Env<'a>, dst: &mut io::Write, ty: &QualType<'a>) -> Result {
@@ -188,15 +177,11 @@ fn write_struct_tag<'a>(env: &mut Env<'a>, dst: &mut io::Write, s: Ref<'a, Struc
     }
 }
 
-pub fn write_struct<'a>(
-    env: &mut Env<'a>,
-    dst: &mut io::Write,
-    mode: ItemMode,
-    s: Ref<'a, Struct<'a>>,
-) -> Result {
-    match mode {
-        ItemMode::Opaque => write_struct_opaque(env, dst, s),
-        ItemMode::Translate => write_struct_def(env, dst, s),
+pub fn write_struct<'a>(env: &mut Env<'a>, dst: &mut io::Write, s: Ref<'a, Struct<'a>>) -> Result {
+    if s.is_complete_ty() {
+        write_struct_def(env, dst, s)
+    } else {
+        write_struct_opaque(env, dst, s)
     }
 }
 
@@ -296,10 +281,7 @@ pub fn write_type_ref<'a>(env: &mut Env<'a>, dst: &mut io::Write, ty: &Type<'a>)
         Type::Float => write!(dst, "c_float"),
         Type::Double => write!(dst, "c_double"),
         Type::Struct(s) => {
-            env.backlog.push(Item {
-                mode: ItemMode::Translate,
-                kind: ItemKind::Struct(s),
-            });
+            env.backlog.push(Item::Struct(s));
             write_struct_tag(env, dst, s)
         }
         Type::Pointer(ref ty) => {
