@@ -7,89 +7,82 @@ use super::{Field, Item, QualType, Ref, Struct, StructKind, Type, Unit, Variable
 
 pub type Result = io::Result<()>;
 
-#[derive(Default)]
-pub struct Env<'a> {
+pub struct Env<'a, 'w> {
+    output: &'w mut (io::Write + 'w),
     backlog: Vec<Item<'a>>,
     def_name: HashMap<usize, String>,
     def_name_next: usize,
 }
 
-impl<'a> Env<'a> {
-    fn gen_name_for(&mut self, id: usize) -> &str {
-        match self.def_name.entry(id) {
+impl<'a, 'w> Env<'a, 'w> {
+    pub fn new(output: &'w mut io::Write) -> Env<'a, 'w> {
+        Env {
+            output: output,
+            backlog: Vec::new(),
+            def_name: HashMap::new(),
+            def_name_next: 0,
+        }
+    }
+    fn gen_name_for(&mut self, id: usize) -> Result {
+        let name = match self.def_name.entry(id) {
             Entry::Occupied(e) => e.into_mut(),
             Entry::Vacant(e) => {
                 let name = format!("Generated_{}", self.def_name_next);
                 self.def_name_next += 1;
                 e.insert(name)
             }
-        }
+        };
+        write!(self.output, "{}", name)
     }
 }
 
-pub fn write_translation_unit<'a>(
-    env: &mut Env<'a>,
-    dst: &mut io::Write,
-    unit: &Unit<'a>,
-) -> Result {
+pub fn write_translation_unit<'a, 'w>(env: &mut Env<'a, 'w>, unit: &Unit<'a>) -> Result {
     for item in &unit.items {
-        write_item(env, dst, item)?;
+        write_item(env, item)?;
     }
 
     while let Some(item) = env.backlog.pop() {
-        write_item(env, dst, &item)?;
+        write_item(env, &item)?;
     }
 
     Ok(())
 }
 
-pub fn write_item<'a>(env: &mut Env<'a>, dst: &mut io::Write, item: &Item<'a>) -> Result {
+pub fn write_item<'a, 'w>(env: &mut Env<'a, 'w>, item: &Item<'a>) -> Result {
     match *item {
-        Item::Struct(s) => write_struct(env, dst, s),
-        Item::Variable(var) => write_variable(env, dst, var),
+        Item::Struct(s) => write_struct(env, s),
+        Item::Variable(var) => write_variable(env, var),
         Item::Function(_) => unimplemented!(),
     }
 }
 
-pub fn write_variable<'a>(
-    env: &mut Env<'a>,
-    dst: &mut io::Write,
-    var: Ref<'a, Variable<'a>>,
-) -> Result {
+pub fn write_variable<'a, 'w>(env: &mut Env<'a, 'w>, var: Ref<'a, Variable<'a>>) -> Result {
     if var.is_defined() {
-        write_static_define(env, dst, var)
+        write_static_define(env, var)
     } else {
-        write_static_extern(env, dst, var)
+        write_static_extern(env, var)
     }
 }
 
-fn write_static_define<'a>(
-    env: &mut Env<'a>,
-    dst: &mut io::Write,
-    var: Ref<'a, Variable<'a>>,
-) -> Result {
-    writeln!(dst, "#[no_mangle]")?;
-    write!(dst, "pub static mut {}: ", var.name)?;
-    write_type_ref(env, dst, &var.ty.ty)?;
-    write!(dst, " = ")?;
+fn write_static_define<'a, 'w>(env: &mut Env<'a, 'w>, var: Ref<'a, Variable<'a>>) -> Result {
+    writeln!(env.output, "#[no_mangle]")?;
+    write!(env.output, "pub static mut {}: ", var.name)?;
+    write_type_ref(env, &var.ty.ty)?;
+    write!(env.output, " = ")?;
     match *var.initial.borrow() {
-        Some(ref expr) => write_expr_as_ty(env, dst, expr, &var.ty.ty)?,
-        None => write_zero_const(env, dst, &var.ty)?,
+        Some(ref expr) => write_expr_as_ty(env, expr, &var.ty.ty)?,
+        None => write_zero_const(env, &var.ty)?,
     }
-    writeln!(dst, ";")
+    writeln!(env.output, ";")
 }
 
-fn write_static_extern<'a>(
-    env: &mut Env<'a>,
-    dst: &mut io::Write,
-    var: Ref<'a, Variable<'a>>,
-) -> Result {
-    write!(dst, "extern {{ pub static mut {}: ", var.name)?;
-    write_type_ref(env, dst, &var.ty.ty)?;
-    writeln!(dst, "; }}")
+fn write_static_extern<'a, 'w>(env: &mut Env<'a, 'w>, var: Ref<'a, Variable<'a>>) -> Result {
+    write!(env.output, "extern {{ pub static mut {}: ", var.name)?;
+    write_type_ref(env, &var.ty.ty)?;
+    writeln!(env.output, "; }}")
 }
 
-pub fn write_zero_const<'a>(env: &mut Env<'a>, dst: &mut io::Write, ty: &QualType<'a>) -> Result {
+pub fn write_zero_const<'a, 'w>(env: &mut Env<'a, 'w>, ty: &QualType<'a>) -> Result {
     match ty.ty {
         Type::Void => unimplemented!(),
         Type::Char
@@ -103,156 +96,147 @@ pub fn write_zero_const<'a>(env: &mut Env<'a>, dst: &mut io::Write, ty: &QualTyp
         | Type::ULong
         | Type::SLongLong
         | Type::ULongLong
-        | Type::Bool => write!(dst, "0"),
-        Type::Float | Type::Double => write!(dst, "0.0"),
+        | Type::Bool => write!(env.output, "0"),
+        Type::Float | Type::Double => write!(env.output, "0.0"),
         Type::Struct(s) => {
-            write_struct_tag(env, dst, s)?;
-            write_struct_fields(env, dst, false, s, &mut |env, dst, field| {
-                write_zero_const(env, dst, &field.ty)
-            })
+            write_struct_tag(env, s)?;
+            write_struct_fields(
+                env,
+                false,
+                s,
+                &mut |env, field| write_zero_const(env, &field.ty),
+            )
         }
-        Type::Pointer(_) => write!(dst, "0 as *mut _"),
+        Type::Pointer(_) => write!(env.output, "0 as *mut _"),
         _ => unimplemented!(),
     }
 }
 
-pub fn write_expr_as_ty<'a>(
-    env: &mut Env<'a>,
-    dst: &mut io::Write,
+pub fn write_expr_as_ty<'a, 'w>(
+    env: &mut Env<'a, 'w>,
     expr: &expr::Expression<'a>,
     ty: &Type<'a>,
 ) -> Result {
     if expr.ty() != ty {
-        write_cast_expr(env, dst, ty, |env, dst| write_expr(env, dst, expr))
+        write_cast_expr(env, ty, |env| write_expr(env, expr))
     } else {
-        write_expr(env, dst, expr)
+        write_expr(env, expr)
     }
 }
 
-pub fn write_expr<'a>(
-    env: &mut Env<'a>,
-    dst: &mut io::Write,
-    expr: &expr::Expression<'a>,
-) -> Result {
+pub fn write_expr<'a, 'w>(env: &mut Env<'a, 'w>, expr: &expr::Expression<'a>) -> Result {
     match *expr {
-        expr::Expression::Constant(ref c) => write_const(env, dst, c),
+        expr::Expression::Constant(ref c) => write_const(env, c),
     }
 }
 
-pub fn write_const<'a>(env: &mut Env<'a>, dst: &mut io::Write, c: &expr::Constant<'a>) -> Result {
+pub fn write_const<'a, 'w>(env: &mut Env<'a, 'w>, c: &expr::Constant<'a>) -> Result {
     match *c {
         expr::Constant::Integer(ref i) => {
-            write_cast_expr(env, dst, &i.ty, |_, dst| {
+            write_cast_expr(env, &i.ty, |env| {
                 match i.base {
-                    expr::IntegerBase::Octal => write!(dst, "0o")?,
-                    expr::IntegerBase::Hexademical => write!(dst, "0x")?,
+                    expr::IntegerBase::Octal => write!(env.output, "0o")?,
+                    expr::IntegerBase::Hexademical => write!(env.output, "0x")?,
                     expr::IntegerBase::Decimal => (),
                 }
-                write!(dst, "{}", i.number)
+                write!(env.output, "{}", i.number)
             })?;
         }
 
         expr::Constant::Float(ref f) => {
-            write_cast_expr(env, dst, &f.ty, |_, dst| write!(dst, "{}", f.number))?;
+            write_cast_expr(env, &f.ty, |env| write!(env.output, "{}", f.number))?;
         }
     }
     Ok(())
 }
 
-fn write_cast_expr<'a, F>(env: &mut Env<'a>, dst: &mut io::Write, ty: &Type<'a>, mut f: F) -> Result
+fn write_cast_expr<'a, 'w, F>(env: &mut Env<'a, 'w>, ty: &Type<'a>, mut f: F) -> Result
 where
-    F: FnMut(&mut Env<'a>, &mut io::Write) -> Result,
+    F: FnMut(&mut Env<'a, 'w>) -> Result,
 {
-    write!(dst, "(")?;
-    f(env, dst)?;
-    write!(dst, ") as ")?;
-    write_type_ref(env, dst, ty)?;
+    write!(env.output, "(")?;
+    f(env)?;
+    write!(env.output, ") as ")?;
+    write_type_ref(env, ty)?;
     Ok(())
 }
 
-fn write_struct_tag<'a>(env: &mut Env<'a>, dst: &mut io::Write, s: Ref<'a, Struct<'a>>) -> Result {
+fn write_struct_tag<'a, 'w>(env: &mut Env<'a, 'w>, s: Ref<'a, Struct<'a>>) -> Result {
     match s.tag {
-        Some(ref tag) => write!(dst, "{}", tag),
-        None => write!(dst, "{}", env.gen_name_for(s.id())),
+        Some(ref tag) => write!(env.output, "{}", tag),
+        None => env.gen_name_for(s.id()),
     }
 }
 
-pub fn write_struct<'a>(env: &mut Env<'a>, dst: &mut io::Write, s: Ref<'a, Struct<'a>>) -> Result {
+pub fn write_struct<'a, 'w>(env: &mut Env<'a, 'w>, s: Ref<'a, Struct<'a>>) -> Result {
     if s.is_complete_ty() {
-        write_struct_def(env, dst, s)
+        write_struct_def(env, s)
     } else {
-        write_struct_opaque(env, dst, s)
+        write_struct_opaque(env, s)
     }
 }
 
-pub fn write_struct_opaque<'a>(
-    env: &mut Env<'a>,
-    dst: &mut io::Write,
-    s: Ref<'a, Struct<'a>>,
-) -> Result {
-    write!(dst, "pub enum ")?;
-    write_struct_tag(env, dst, s)?;
-    writeln!(dst, "{{}}")
+pub fn write_struct_opaque<'a, 'w>(env: &mut Env<'a, 'w>, s: Ref<'a, Struct<'a>>) -> Result {
+    write!(env.output, "pub enum ")?;
+    write_struct_tag(env, s)?;
+    writeln!(env.output, "{{}}")
 }
 
-pub fn write_struct_def<'a>(
-    env: &mut Env<'a>,
-    dst: &mut io::Write,
-    s: Ref<'a, Struct<'a>>,
-) -> Result {
+pub fn write_struct_def<'a, 'w>(env: &mut Env<'a, 'w>, s: Ref<'a, Struct<'a>>) -> Result {
     let kind = match s.kind {
         StructKind::Struct => "struct",
         StructKind::Union => "union",
     };
 
-    writeln!(dst, "#[repr(C)]")?;
+    writeln!(env.output, "#[repr(C)]")?;
 
-    write!(dst, "pub {} ", kind)?;
-    write_struct_tag(env, dst, s)?;
+    write!(env.output, "pub {} ", kind)?;
+    write_struct_tag(env, s)?;
 
-    write_struct_fields(env, dst, true, s, &mut |env, dst, field| {
-        write_type_ref(env, dst, &field.ty.ty)
-    })?;
+    write_struct_fields(
+        env,
+        true,
+        s,
+        &mut |env, field| write_type_ref(env, &field.ty.ty),
+    )?;
 
-    writeln!(dst)
+    writeln!(env.output)
 }
 
-fn write_struct_field<'a>(
+fn write_struct_field<'a, 'w>(
     seq: &mut RangeFrom<usize>,
-    env: &mut Env<'a>,
-    dst: &mut io::Write,
+    env: &mut Env<'a, 'w>,
     is_def: bool,
     field: &Field<'a>,
-    f: &mut FnMut(&mut Env<'a>, &mut io::Write, &Field<'a>) -> Result,
+    f: &mut FnMut(&mut Env<'a, 'w>, &Field<'a>) -> Result,
 ) -> Result {
     if is_def {
-        write!(dst, "pub ")?;
+        write!(env.output, "pub ")?;
     }
 
     match field.name {
-        Some(ref name) => write!(dst, "{}", name),
-        None => write!(dst, "anon_{}", seq.next().unwrap()),
+        Some(ref name) => write!(env.output, "{}", name),
+        None => write!(env.output, "anon_{}", seq.next().unwrap()),
     }?;
 
-    write!(dst, ": ")?;
-    f(env, dst, field)?;
-    writeln!(dst, ",")
+    write!(env.output, ": ")?;
+    f(env, field)?;
+    writeln!(env.output, ",")
 }
 
-fn write_struct_fields<'a>(
-    env: &mut Env<'a>,
-    dst: &mut io::Write,
+fn write_struct_fields<'a, 'w>(
+    env: &mut Env<'a, 'w>,
     is_def: bool,
     s: Ref<'a, Struct<'a>>,
-    f: &mut FnMut(&mut Env<'a>, &mut io::Write, &Field<'a>) -> Result,
+    f: &mut FnMut(&mut Env<'a, 'w>, &Field<'a>) -> Result,
 ) -> Result {
     let seq = &mut (0..);
 
-    writeln!(dst, " {{")?;
+    writeln!(env.output, " {{")?;
 
     if let Some(ref fields) = *s.fields.borrow() {
         for field in fields {
-            write_struct_field(seq, env, dst, is_def, &*field, f)?;
+            write_struct_field(seq, env, is_def, &*field, f)?;
 
             if !is_def && s.kind == StructKind::Union {
                 break;
@@ -260,33 +244,33 @@ fn write_struct_fields<'a>(
         }
     }
 
-    write!(dst, "}}")?;
+    write!(env.output, "}}")?;
     Ok(())
 }
 
-pub fn write_type_ref<'a>(env: &mut Env<'a>, dst: &mut io::Write, ty: &Type<'a>) -> Result {
+pub fn write_type_ref<'a, 'w>(env: &mut Env<'a, 'w>, ty: &Type<'a>) -> Result {
     match *ty {
-        Type::Void => write!(dst, "c_void"),
-        Type::Char => write!(dst, "c_char"),
-        Type::SChar => write!(dst, "c_schar"),
-        Type::UChar => write!(dst, "c_uchar"),
-        Type::SInt => write!(dst, "c_int"),
-        Type::UInt => write!(dst, "c_uint"),
-        Type::SShort => write!(dst, "c_short"),
-        Type::UShort => write!(dst, "c_ushort"),
-        Type::SLong => write!(dst, "c_long"),
-        Type::ULong => write!(dst, "c_ulong"),
-        Type::SLongLong => write!(dst, "c_longlong"),
-        Type::ULongLong => write!(dst, "c_ulonglong"),
-        Type::Float => write!(dst, "c_float"),
-        Type::Double => write!(dst, "c_double"),
+        Type::Void => write!(env.output, "c_void"),
+        Type::Char => write!(env.output, "c_char"),
+        Type::SChar => write!(env.output, "c_schar"),
+        Type::UChar => write!(env.output, "c_uchar"),
+        Type::SInt => write!(env.output, "c_int"),
+        Type::UInt => write!(env.output, "c_uint"),
+        Type::SShort => write!(env.output, "c_short"),
+        Type::UShort => write!(env.output, "c_ushort"),
+        Type::SLong => write!(env.output, "c_long"),
+        Type::ULong => write!(env.output, "c_ulong"),
+        Type::SLongLong => write!(env.output, "c_longlong"),
+        Type::ULongLong => write!(env.output, "c_ulonglong"),
+        Type::Float => write!(env.output, "c_float"),
+        Type::Double => write!(env.output, "c_double"),
         Type::Struct(s) => {
             env.backlog.push(Item::Struct(s));
-            write_struct_tag(env, dst, s)
+            write_struct_tag(env, s)
         }
         Type::Pointer(ref ty) => {
-            write!(dst, "*mut ")?;
-            write_type_ref(env, dst, &ty.ty)
+            write!(env.output, "*mut ")?;
+            write_type_ref(env, &ty.ty)
         }
         _ => unimplemented!(),
     }
@@ -303,7 +287,7 @@ fn translate(s: &str) -> String {
     let mut buf = Vec::new();
     let parse = lang_c::driver::parse_preprocessed(&Default::default(), s.into()).unwrap();
     let ir = interpret_translation_unit(alloc, &mut super::Env::new(), &parse.unit).unwrap();
-    write_translation_unit(&mut Default::default(), &mut buf, &ir).unwrap();
+    write_translation_unit(&mut Env::new(&mut buf), &ir).unwrap();
     let s = String::from_utf8(buf).unwrap();
     syn::parse_str::<syn::File>(&s).unwrap();
     s

@@ -4,6 +4,8 @@ extern crate lang_c_corrode;
 use std::env;
 use std::io::stdout;
 
+use lang_c_corrode::gen;
+
 fn main() {
     let text = env::args().nth(1).unwrap();
     let ast = lang_c::driver::parse_preprocessed(&Default::default(), text).unwrap();
@@ -14,6 +16,6 @@ fn main() {
         &ast.unit,
     ).unwrap();
     let stdout = stdout();
-    lang_c_corrode::gen::write_translation_unit(&mut Default::default(), &mut stdout.lock(), &ir)
+    gen::write_translation_unit(&mut gen::Env::new(&mut stdout.lock()), &ir)
         .unwrap();
 }
