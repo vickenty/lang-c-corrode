@@ -17,10 +17,18 @@ pub struct Env<'a, 'w> {
 }
 
 impl<'a, 'w> io::Write for Env<'a, 'w> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> { self.output.write(buf) }
-    fn flush(&mut self) -> io::Result<()> { self.output.flush() }
-    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> { self.output.write_all(buf) }
-    fn write_fmt(&mut self, fmt: fmt::Arguments) -> io::Result<()> { self.output.write_fmt(fmt) }
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.output.write(buf)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.output.flush()
+    }
+    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+        self.output.write_all(buf)
+    }
+    fn write_fmt(&mut self, fmt: fmt::Arguments) -> io::Result<()> {
+        self.output.write_fmt(fmt)
+    }
 }
 
 impl<'a, 'w> Env<'a, 'w> {

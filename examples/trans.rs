@@ -16,6 +16,5 @@ fn main() {
         &ast.unit,
     ).unwrap();
     let stdout = stdout();
-    gen::write_translation_unit(&mut gen::Env::new(&mut stdout.lock()), &ir)
-        .unwrap();
+    gen::write_translation_unit(&mut gen::Env::new(&mut stdout.lock()), &ir).unwrap();
 }
