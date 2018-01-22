@@ -142,12 +142,14 @@ impl<'a> Scope<'a> {
 
 pub struct Env<'a> {
     scopes: Vec<Scope<'a>>,
+    struct_defs: Vec<Ref<'a, Struct<'a>>>,
 }
 
 impl<'a> Env<'a> {
     pub fn new() -> Env<'a> {
         Env {
             scopes: vec![Scope::new()],
+            struct_defs: Vec::new(),
         }
     }
 
@@ -167,8 +169,12 @@ impl<'a> Env<'a> {
         self.top().add_function(name, fun);
     }
 
-    fn add_struct(&mut self, tag: &str, s: Ref<'a, Struct<'a>>) {
-        self.top().add_struct(tag, s);
+    fn add_struct(&mut self, s: Ref<'a, Struct<'a>>) {
+        self.struct_defs.push(s);
+
+        if let Some(ref tag) = s.tag {
+            self.top().add_struct(tag, s);
+        }
     }
 
     fn lookup_name(&self, name: &str) -> Option<&NameDef<'a>> {
@@ -968,6 +974,7 @@ pub struct Struct<'a> {
     kind: StructKind,
     tag: Option<String>,
     fields: RefCell<Option<Vec<Ref<'a, Field<'a>>>>>,
+    rust_name: RefCell<Option<String>>,
 }
 
 impl<'a> Struct<'a> {
@@ -976,6 +983,7 @@ impl<'a> Struct<'a> {
             kind: kind,
             tag: tag,
             fields: RefCell::new(None),
+            rust_name: RefCell::new(None),
         }
     }
 
@@ -1018,9 +1026,7 @@ fn interpret_struct_type<'a>(
         Some(Ok(s)) => s,
         None => {
             let s = alloc.new_struct(Struct::new(kind, tag.map(ToOwned::to_owned)));
-            if let Some(tag) = tag {
-                env.add_struct(tag, s);
-            }
+            env.add_struct(s);
             s
         }
     };
@@ -1099,7 +1105,7 @@ fn test_struct() {
     let env = &mut Env::new();
 
     let decls = interpret_decl_str(alloc, env, "struct x { struct x (*next); } head;").unwrap();
-    assert!(decls.len() == 1);
+    assert!(decls.len() == 2);
     let decl = decls.get(0).unwrap();
     let head = match *decl {
         Item::Variable(v) => v,
@@ -1282,6 +1288,32 @@ pub fn interpret_translation_unit<'a>(
             }
             _ => unimplemented!(),
         }
+    }
+
+    let mut seq = 0..;
+
+    for s in &env.struct_defs {
+        let mut s_name = s.rust_name.borrow_mut();
+        if let Some(ref tag) = s.tag {
+            let mut name = tag.clone();
+            loop {
+                if env.lookup_name(&name).is_none() {
+                    *s_name = Some(name);
+                    break;
+                }
+                name.push('_');
+            }
+        } else {
+            loop {
+                let name = format!("Generated_{}", seq.next().unwrap());
+                if env.lookup_tag(&name, false).is_none() && env.lookup_name(&name).is_none() {
+                    *s_name = Some(name);
+                    break;
+                }
+            }
+        }
+
+        items.push(Item::Struct(*s));
     }
 
     Ok(Unit { items: items })

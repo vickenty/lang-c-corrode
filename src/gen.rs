@@ -2,21 +2,17 @@ use std::io;
 use std::io::Write;
 use std::fmt;
 use std::ops::RangeFrom;
-use std::collections::hash_map::{Entry, HashMap};
 
 use super::expr;
 use super::{Field, Item, QualType, Ref, Struct, StructKind, Type, Unit, Variable};
 
 pub type Result = io::Result<()>;
 
-pub struct Env<'a, 'w> {
+pub struct Env<'w> {
     output: &'w mut (io::Write + 'w),
-    backlog: Vec<Item<'a>>,
-    def_name: HashMap<usize, String>,
-    def_name_next: usize,
 }
 
-impl<'a, 'w> io::Write for Env<'a, 'w> {
+impl<'a, 'w> io::Write for Env<'w> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.output.write(buf)
     }
@@ -31,41 +27,21 @@ impl<'a, 'w> io::Write for Env<'a, 'w> {
     }
 }
 
-impl<'a, 'w> Env<'a, 'w> {
-    pub fn new(output: &'w mut io::Write) -> Env<'a, 'w> {
-        Env {
-            output: output,
-            backlog: Vec::new(),
-            def_name: HashMap::new(),
-            def_name_next: 0,
-        }
-    }
-    fn gen_name_for(&mut self, id: usize) -> Result {
-        let name = match self.def_name.entry(id) {
-            Entry::Occupied(e) => e.into_mut(),
-            Entry::Vacant(e) => {
-                let name = format!("Generated_{}", self.def_name_next);
-                self.def_name_next += 1;
-                e.insert(name)
-            }
-        };
-        write!(self.output, "{}", name)
+impl<'a, 'w> Env<'w> {
+    pub fn new(output: &'w mut io::Write) -> Env<'w> {
+        Env { output: output }
     }
 }
 
-pub fn write_translation_unit<'a, 'w>(env: &mut Env<'a, 'w>, unit: &Unit<'a>) -> Result {
+pub fn write_translation_unit<'a, 'w>(env: &mut Env<'w>, unit: &Unit<'a>) -> Result {
     for item in &unit.items {
         write_item(env, item)?;
-    }
-
-    while let Some(item) = env.backlog.pop() {
-        write_item(env, &item)?;
     }
 
     Ok(())
 }
 
-pub fn write_item<'a, 'w>(env: &mut Env<'a, 'w>, item: &Item<'a>) -> Result {
+pub fn write_item<'a, 'w>(env: &mut Env<'w>, item: &Item<'a>) -> Result {
     match *item {
         Item::Struct(s) => write_struct(env, s),
         Item::Variable(var) => write_variable(env, var),
@@ -73,7 +49,7 @@ pub fn write_item<'a, 'w>(env: &mut Env<'a, 'w>, item: &Item<'a>) -> Result {
     }
 }
 
-pub fn write_variable<'a, 'w>(env: &mut Env<'a, 'w>, var: Ref<'a, Variable<'a>>) -> Result {
+pub fn write_variable<'a, 'w>(env: &mut Env<'w>, var: Ref<'a, Variable<'a>>) -> Result {
     if var.is_defined() {
         write_static_define(env, var)
     } else {
@@ -81,7 +57,7 @@ pub fn write_variable<'a, 'w>(env: &mut Env<'a, 'w>, var: Ref<'a, Variable<'a>>)
     }
 }
 
-fn write_static_define<'a, 'w>(env: &mut Env<'a, 'w>, var: Ref<'a, Variable<'a>>) -> Result {
+fn write_static_define<'a, 'w>(env: &mut Env<'w>, var: Ref<'a, Variable<'a>>) -> Result {
     writeln!(env.output, "#[no_mangle]")?;
     write!(env, "pub static mut {}: ", var.name)?;
     write_type_ref(env, &var.ty.ty)?;
@@ -93,13 +69,13 @@ fn write_static_define<'a, 'w>(env: &mut Env<'a, 'w>, var: Ref<'a, Variable<'a>>
     writeln!(env.output, ";")
 }
 
-fn write_static_extern<'a, 'w>(env: &mut Env<'a, 'w>, var: Ref<'a, Variable<'a>>) -> Result {
+fn write_static_extern<'a, 'w>(env: &mut Env<'w>, var: Ref<'a, Variable<'a>>) -> Result {
     write!(env, "extern {{ pub static mut {}: ", var.name)?;
     write_type_ref(env, &var.ty.ty)?;
     writeln!(env.output, "; }}")
 }
 
-pub fn write_zero_const<'a, 'w>(env: &mut Env<'a, 'w>, ty: &QualType<'a>) -> Result {
+pub fn write_zero_const<'a, 'w>(env: &mut Env<'w>, ty: &QualType<'a>) -> Result {
     match ty.ty {
         Type::Void => unimplemented!(),
         Type::Char
@@ -130,7 +106,7 @@ pub fn write_zero_const<'a, 'w>(env: &mut Env<'a, 'w>, ty: &QualType<'a>) -> Res
 }
 
 pub fn write_expr_as_ty<'a, 'w>(
-    env: &mut Env<'a, 'w>,
+    env: &mut Env<'w>,
     expr: &expr::Expression<'a>,
     ty: &Type<'a>,
 ) -> Result {
@@ -141,13 +117,13 @@ pub fn write_expr_as_ty<'a, 'w>(
     }
 }
 
-pub fn write_expr<'a, 'w>(env: &mut Env<'a, 'w>, expr: &expr::Expression<'a>) -> Result {
+pub fn write_expr<'a, 'w>(env: &mut Env<'w>, expr: &expr::Expression<'a>) -> Result {
     match *expr {
         expr::Expression::Constant(ref c) => write_const(env, c),
     }
 }
 
-pub fn write_const<'a, 'w>(env: &mut Env<'a, 'w>, c: &expr::Constant<'a>) -> Result {
+pub fn write_const<'a, 'w>(env: &mut Env<'w>, c: &expr::Constant<'a>) -> Result {
     match *c {
         expr::Constant::Integer(ref i) => {
             write_cast_expr(env, &i.ty, |env| {
@@ -167,9 +143,9 @@ pub fn write_const<'a, 'w>(env: &mut Env<'a, 'w>, c: &expr::Constant<'a>) -> Res
     Ok(())
 }
 
-fn write_cast_expr<'a, 'w, F>(env: &mut Env<'a, 'w>, ty: &Type<'a>, mut f: F) -> Result
+fn write_cast_expr<'a, 'w, F>(env: &mut Env<'w>, ty: &Type<'a>, mut f: F) -> Result
 where
-    F: FnMut(&mut Env<'a, 'w>) -> Result,
+    F: FnMut(&mut Env<'w>) -> Result,
 {
     write!(env, "(")?;
     f(env)?;
@@ -178,14 +154,18 @@ where
     Ok(())
 }
 
-fn write_struct_tag<'a, 'w>(env: &mut Env<'a, 'w>, s: Ref<'a, Struct<'a>>) -> Result {
-    match s.tag {
-        Some(ref tag) => write!(env, "{}", tag),
-        None => env.gen_name_for(s.id()),
-    }
+fn write_struct_tag<'a, 'w>(env: &mut Env<'w>, s: Ref<'a, Struct<'a>>) -> Result {
+    write!(
+        env,
+        "{}",
+        s.rust_name
+            .borrow()
+            .as_ref()
+            .expect("struct without rust_name")
+    )
 }
 
-pub fn write_struct<'a, 'w>(env: &mut Env<'a, 'w>, s: Ref<'a, Struct<'a>>) -> Result {
+pub fn write_struct<'a, 'w>(env: &mut Env<'w>, s: Ref<'a, Struct<'a>>) -> Result {
     if s.is_complete_ty() {
         write_struct_def(env, s)
     } else {
@@ -193,13 +173,13 @@ pub fn write_struct<'a, 'w>(env: &mut Env<'a, 'w>, s: Ref<'a, Struct<'a>>) -> Re
     }
 }
 
-pub fn write_struct_opaque<'a, 'w>(env: &mut Env<'a, 'w>, s: Ref<'a, Struct<'a>>) -> Result {
+pub fn write_struct_opaque<'a, 'w>(env: &mut Env<'w>, s: Ref<'a, Struct<'a>>) -> Result {
     write!(env, "pub enum ")?;
     write_struct_tag(env, s)?;
     writeln!(env.output, "{{}}")
 }
 
-pub fn write_struct_def<'a, 'w>(env: &mut Env<'a, 'w>, s: Ref<'a, Struct<'a>>) -> Result {
+pub fn write_struct_def<'a, 'w>(env: &mut Env<'w>, s: Ref<'a, Struct<'a>>) -> Result {
     let kind = match s.kind {
         StructKind::Struct => "struct",
         StructKind::Union => "union",
@@ -222,10 +202,10 @@ pub fn write_struct_def<'a, 'w>(env: &mut Env<'a, 'w>, s: Ref<'a, Struct<'a>>) -
 
 fn write_struct_field<'a, 'w>(
     seq: &mut RangeFrom<usize>,
-    env: &mut Env<'a, 'w>,
+    env: &mut Env<'w>,
     is_def: bool,
     field: &Field<'a>,
-    f: &mut FnMut(&mut Env<'a, 'w>, &Field<'a>) -> Result,
+    f: &mut FnMut(&mut Env<'w>, &Field<'a>) -> Result,
 ) -> Result {
     if is_def {
         write!(env, "pub ")?;
@@ -242,10 +222,10 @@ fn write_struct_field<'a, 'w>(
 }
 
 fn write_struct_fields<'a, 'w>(
-    env: &mut Env<'a, 'w>,
+    env: &mut Env<'w>,
     is_def: bool,
     s: Ref<'a, Struct<'a>>,
-    f: &mut FnMut(&mut Env<'a, 'w>, &Field<'a>) -> Result,
+    f: &mut FnMut(&mut Env<'w>, &Field<'a>) -> Result,
 ) -> Result {
     let seq = &mut (0..);
 
@@ -265,7 +245,7 @@ fn write_struct_fields<'a, 'w>(
     Ok(())
 }
 
-pub fn write_type_ref<'a, 'w>(env: &mut Env<'a, 'w>, ty: &Type<'a>) -> Result {
+pub fn write_type_ref<'a, 'w>(env: &mut Env<'w>, ty: &Type<'a>) -> Result {
     match *ty {
         Type::Void => write!(env, "c_void"),
         Type::Char => write!(env, "c_char"),
@@ -281,10 +261,7 @@ pub fn write_type_ref<'a, 'w>(env: &mut Env<'a, 'w>, ty: &Type<'a>) -> Result {
         Type::ULongLong => write!(env, "c_ulonglong"),
         Type::Float => write!(env, "c_float"),
         Type::Double => write!(env, "c_double"),
-        Type::Struct(s) => {
-            env.backlog.push(Item::Struct(s));
-            write_struct_tag(env, s)
-        }
+        Type::Struct(s) => write_struct_tag(env, s),
         Type::Pointer(ref ty) => {
             write!(env, "*mut ")?;
             write_type_ref(env, &ty.ty)
@@ -353,9 +330,9 @@ fn test_anon_struct() {
          #[repr(C)]\n\
          pub struct Generated_0 {\npub anon_0: Generated_1,\npub anon_1: Generated_2,\n}\n\
          #[repr(C)]\n\
-         pub struct Generated_2 {\npub c: c_int,\npub d: c_int,\n}\n\
-         #[repr(C)]\n\
          pub union Generated_1 {\npub a: c_int,\npub b: c_float,\n}\n\
+         #[repr(C)]\n\
+         pub struct Generated_2 {\npub c: c_int,\npub d: c_int,\n}\n\
          "
     );
 }
