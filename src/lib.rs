@@ -5,7 +5,7 @@ extern crate syn;
 
 use std::fmt;
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use lang_c::ast;
 use lang_c::span::Node;
@@ -1001,6 +1001,7 @@ pub enum StructKind {
 #[derive(Debug, PartialEq, Clone)]
 pub struct Field<'a> {
     name: Option<String>,
+    rust_name: RefCell<Option<String>>,
     ty: QualType<'a>,
 }
 
@@ -1078,6 +1079,7 @@ fn interpret_field_decl<'a>(
             output.push(alloc.new_field(Field {
                 name: None,
                 ty: base_qty,
+                rust_name: None.into(),
             }));
         }
         return Ok(());
@@ -1092,6 +1094,7 @@ fn interpret_field_decl<'a>(
             output.push(alloc.new_field(Field {
                 name: name,
                 ty: qty,
+                rust_name: None.into(),
             }));
         }
     }
@@ -1309,6 +1312,29 @@ pub fn interpret_translation_unit<'a>(
                 if env.lookup_tag(&name, false).is_none() && env.lookup_name(&name).is_none() {
                     *s_name = Some(name);
                     break;
+                }
+            }
+        }
+
+        if let Some(ref fields) = *s.fields.borrow_mut() {
+            let field_names = &mut fields
+                .iter()
+                .filter_map(|f| f.name.as_ref())
+                .collect::<HashSet<_>>();
+
+            let mut seq = 0..;
+
+            for f in fields {
+                if f.name.is_some() {
+                    *f.rust_name.borrow_mut() = f.name.clone();
+                } else {
+                    loop {
+                        let name = format!("anon_{}", seq.next().unwrap());
+                        if !field_names.contains(&name) {
+                            *f.rust_name.borrow_mut() = Some(name);
+                            break;
+                        }
+                    }
                 }
             }
         }

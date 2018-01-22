@@ -1,7 +1,6 @@
 use std::io;
 use std::io::Write;
 use std::fmt;
-use std::ops::RangeFrom;
 
 use super::expr;
 use super::{Field, Item, QualType, Ref, Struct, StructKind, Type, Unit, Variable};
@@ -201,7 +200,6 @@ pub fn write_struct_def<'a, 'w>(env: &mut Env<'w>, s: Ref<'a, Struct<'a>>) -> Re
 }
 
 fn write_struct_field<'a, 'w>(
-    seq: &mut RangeFrom<usize>,
     env: &mut Env<'w>,
     is_def: bool,
     field: &Field<'a>,
@@ -211,12 +209,16 @@ fn write_struct_field<'a, 'w>(
         write!(env, "pub ")?;
     }
 
-    match field.name {
-        Some(ref name) => write!(env, "{}", name),
-        None => write!(env, "anon_{}", seq.next().unwrap()),
-    }?;
+    write!(
+        env,
+        "{}: ",
+        field
+            .rust_name
+            .borrow()
+            .as_ref()
+            .expect("field without rust_name")
+    )?;
 
-    write!(env, ": ")?;
     f(env, field)?;
     writeln!(env.output, ",")
 }
@@ -227,13 +229,11 @@ fn write_struct_fields<'a, 'w>(
     s: Ref<'a, Struct<'a>>,
     f: &mut FnMut(&mut Env<'w>, &Field<'a>) -> Result,
 ) -> Result {
-    let seq = &mut (0..);
-
     writeln!(env.output, " {{")?;
 
     if let Some(ref fields) = *s.fields.borrow() {
         for field in fields {
-            write_struct_field(seq, env, is_def, &*field, f)?;
+            write_struct_field(env, is_def, &*field, f)?;
 
             if !is_def && s.kind == StructKind::Union {
                 break;
