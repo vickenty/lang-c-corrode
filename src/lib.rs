@@ -3,6 +3,8 @@ extern crate lang_c;
 #[cfg(test)]
 extern crate syn;
 
+use std::mem;
+use std::ops::RangeFrom;
 use std::fmt;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -143,6 +145,7 @@ impl<'a> Scope<'a> {
 pub struct Env<'a> {
     scopes: Vec<Scope<'a>>,
     struct_defs: Vec<Ref<'a, Struct<'a>>>,
+    name_seq: RangeFrom<usize>,
 }
 
 impl<'a> Env<'a> {
@@ -150,6 +153,7 @@ impl<'a> Env<'a> {
         Env {
             scopes: vec![Scope::new()],
             struct_defs: Vec::new(),
+            name_seq: 0..,
         }
     }
 
@@ -231,6 +235,30 @@ impl<'a> Env<'a> {
             Some(&TagDef::Struct(s)) => Some(Ok(s)),
             Some(_) => Some(Err("not a struct or a union")),
             None => None,
+        }
+    }
+
+    fn mangle_name(&self, name: &mut String) {
+        while self.lookup_name(&name).is_some() {
+            name.push('_');
+        }
+    }
+
+    fn generate_name(&mut self) -> String {
+        loop {
+            let name = format!("Generated_{}", self.name_seq.next().unwrap());
+            if self.lookup_name(&name).is_none() {
+                return name;
+            }
+        }
+    }
+
+    fn finalize(mut self, items: &mut Vec<Item<'a>>) {
+        let defs = mem::replace(&mut self.struct_defs, Vec::new());
+
+        for s in defs {
+            s.postprocess(&mut self);
+            items.push(Item::Struct(s));
         }
     }
 }
@@ -770,24 +798,19 @@ fn test_specs() {
 }
 
 #[cfg(test)]
-fn interpret_decl_str<'a>(
-    alloc: &'a Alloc<'a>,
-    env: &mut Env<'a>,
-    decl_str: &str,
-) -> Result<Vec<Item<'a>>, Error> {
+fn interpret_decl_str<'a>(alloc: &'a Alloc<'a>, decl_str: &str) -> Result<Vec<Item<'a>>, Error> {
     let conf = &Default::default();
     let parse =
         lang_c::driver::parse_preprocessed(conf, decl_str.to_owned()).expect("syntax error");
-    interpret_translation_unit(alloc, env, &parse.unit).map(|u| u.items)
+    interpret_translation_unit(alloc, &parse.unit).map(|u| u.items)
 }
 
 #[test]
 fn test_decl() {
     let alloc = &Alloc::new();
-    let env = &mut Env::new();
 
     assert_eq!(
-        interpret_decl_str(alloc, env, "extern int x, * const y;"),
+        interpret_decl_str(alloc, "extern int x, * const y;"),
         Ok(vec![
             Item::Variable(alloc.new_variable(Variable {
                 linkage: Linkage::External,
@@ -822,7 +845,6 @@ fn test_decl() {
 #[test]
 fn test_external_def() {
     let alloc = &Alloc::new();
-    let env = &mut Env::new();
 
     let x = alloc.new_variable(Variable {
         linkage: Linkage::Internal,
@@ -863,7 +885,6 @@ fn test_external_def() {
     assert_eq!(
         interpret_decl_str(
             alloc,
-            env,
             "static int x; extern int x; \
              extern int y; extern int y; \
              extern int z; int z;"
@@ -883,7 +904,7 @@ fn test_external_def() {
 fn test_extern_init() {
     let alloc = &Alloc::new();
     assert_eq!(
-        interpret_decl_str(alloc, &mut Env::new(), "extern int a = 1;"),
+        interpret_decl_str(alloc, "extern int a = 1;"),
         Ok(vec![
             Item::Variable(
                 alloc.new_variable(Variable {
@@ -913,9 +934,8 @@ fn test_extern_init() {
 #[test]
 fn test_typedef() {
     let alloc = &Alloc::new();
-    let env = &mut Env::new();
     assert_eq!(
-        interpret_decl_str(alloc, env, "volatile int typedef a, *b; a c; const b d;"),
+        interpret_decl_str(alloc, "volatile int typedef a, *b; a c; const b d;"),
         Ok(vec![
             Item::Variable(alloc.new_variable(Variable {
                 linkage: Linkage::External,
@@ -950,9 +970,8 @@ fn test_typedef() {
 #[test]
 fn test_typedef_fn() {
     let alloc = &Alloc::new();
-    let env = &mut Env::new();
     assert_eq!(
-        interpret_decl_str(alloc, env, "typedef int foo(); foo a;"),
+        interpret_decl_str(alloc, "typedef int foo(); foo a;"),
         Ok(vec![
             Item::Function(alloc.new_function(Function {
                 linkage: Linkage::External,
@@ -989,6 +1008,49 @@ impl<'a> Struct<'a> {
 
     pub fn is_complete_ty(&self) -> bool {
         self.fields.borrow().is_some()
+    }
+
+    fn postprocess(&self, env: &mut Env) {
+        self.postprocess_name(env);
+        self.postprocess_fields();
+    }
+
+    fn postprocess_name(&self, env: &mut Env) {
+        if let Some(mut name) = self.tag.clone() {
+            env.mangle_name(&mut name);
+            *self.rust_name.borrow_mut() = Some(name);
+        } else {
+            *self.rust_name.borrow_mut() = Some(env.generate_name());
+        }
+    }
+
+    fn postprocess_fields(&self) {
+        let fields = self.fields.borrow();
+        let fields = match *fields {
+            Some(ref f) => f,
+            None => return,
+        };
+
+        let field_names = fields
+            .iter()
+            .filter_map(|f| f.name.as_ref())
+            .collect::<HashSet<_>>();
+
+        let mut seq = 0..;
+
+        for f in fields {
+            if f.name.is_some() {
+                *f.rust_name.borrow_mut() = f.name.clone();
+            } else {
+                loop {
+                    let name = format!("anon_{}", seq.next().unwrap());
+                    if !field_names.contains(&name) {
+                        *f.rust_name.borrow_mut() = Some(name);
+                        break;
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1105,9 +1167,8 @@ fn interpret_field_decl<'a>(
 #[test]
 fn test_struct() {
     let alloc = &Alloc::new();
-    let env = &mut Env::new();
 
-    let decls = interpret_decl_str(alloc, env, "struct x { struct x (*next); } head;").unwrap();
+    let decls = interpret_decl_str(alloc, "struct x { struct x (*next); } head;").unwrap();
     assert!(decls.len() == 2);
     let decl = decls.get(0).unwrap();
     let head = match *decl {
@@ -1251,7 +1312,7 @@ fn derive_func_type_kr<'a>(
 fn test_function_ptr() {
     let alloc = &Alloc::new();
     assert_eq!(
-        interpret_decl_str(alloc, &mut Env::new(), "int (*p)(int, ...);"),
+        interpret_decl_str(alloc, "int (*p)(int, ...);"),
         Ok(vec![
             Item::Variable(
                 alloc.new_variable(Variable {
@@ -1279,68 +1340,21 @@ fn test_function_ptr() {
 
 pub fn interpret_translation_unit<'a>(
     alloc: &'a Alloc<'a>,
-    env: &mut Env<'a>,
     unit: &ast::TranslationUnit,
 ) -> Result<Unit<'a>, Error> {
+    let mut env = Env::new();
     let mut items = Vec::new();
 
     for ed in &unit.0 {
         match ed.node {
             ast::ExternalDeclaration::Declaration(ref decl) => {
-                items.extend(interpret_declaration(alloc, env, true, decl)?)
+                items.extend(interpret_declaration(alloc, &mut env, true, decl)?)
             }
             _ => unimplemented!(),
         }
     }
 
-    let mut seq = 0..;
-
-    for s in &env.struct_defs {
-        let mut s_name = s.rust_name.borrow_mut();
-        if let Some(ref tag) = s.tag {
-            let mut name = tag.clone();
-            loop {
-                if env.lookup_name(&name).is_none() {
-                    *s_name = Some(name);
-                    break;
-                }
-                name.push('_');
-            }
-        } else {
-            loop {
-                let name = format!("Generated_{}", seq.next().unwrap());
-                if env.lookup_tag(&name, false).is_none() && env.lookup_name(&name).is_none() {
-                    *s_name = Some(name);
-                    break;
-                }
-            }
-        }
-
-        if let Some(ref fields) = *s.fields.borrow_mut() {
-            let field_names = &mut fields
-                .iter()
-                .filter_map(|f| f.name.as_ref())
-                .collect::<HashSet<_>>();
-
-            let mut seq = 0..;
-
-            for f in fields {
-                if f.name.is_some() {
-                    *f.rust_name.borrow_mut() = f.name.clone();
-                } else {
-                    loop {
-                        let name = format!("anon_{}", seq.next().unwrap());
-                        if !field_names.contains(&name) {
-                            *f.rust_name.borrow_mut() = Some(name);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        items.push(Item::Struct(*s));
-    }
+    env.finalize(&mut items);
 
     Ok(Unit { items: items })
 }

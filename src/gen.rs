@@ -280,7 +280,7 @@ fn translate(s: &str) -> String {
     let alloc = &Alloc::new();
     let mut buf = Vec::new();
     let parse = lang_c::driver::parse_preprocessed(&Default::default(), s.into()).unwrap();
-    let ir = interpret_translation_unit(alloc, &mut super::Env::new(), &parse.unit).unwrap();
+    let ir = interpret_translation_unit(alloc, &parse.unit).unwrap();
     write_translation_unit(&mut Env::new(&mut buf), &ir).unwrap();
     let s = String::from_utf8(buf).unwrap();
     syn::parse_str::<syn::File>(&s).unwrap();
