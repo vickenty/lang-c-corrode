@@ -1,11 +1,15 @@
 use ast;
 use {Error, Type};
 
+pub use ast::BinaryOperator;
+pub use ast::UnaryOperator;
 pub use ast::IntegerBase;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Expression<'a> {
     Constant(Box<Constant<'a>>),
+    Unary(Box<Unary<'a>>),
+    Binary(Box<Binary<'a>>),
 }
 
 impl<'a> Expression<'a> {
@@ -13,6 +17,12 @@ impl<'a> Expression<'a> {
         Ok(Box::new(match *expr {
             ast::Expression::Constant(ref c) => {
                 Expression::Constant(Constant::from_ast(&c.node)?.into())
+            }
+            ast::Expression::UnaryOperator(ref e) => {
+                Expression::Unary(Unary::from_ast(&e.node)?.into())
+            }
+            ast::Expression::BinaryOperator(ref e) => {
+                Expression::Binary(Binary::from_ast(&e.node)?.into())
             }
             _ => unimplemented!(),
         }))
@@ -28,6 +38,8 @@ impl<'a> Expression<'a> {
     pub fn ty(&self) -> &Type<'a> {
         match *self {
             Expression::Constant(ref c) => c.ty(),
+            Expression::Unary(ref e) => e.ty(),
+            Expression::Binary(ref e) => e.ty(),
         }
     }
 }
@@ -133,5 +145,64 @@ impl<'a> Float<'a> {
             ty: ty,
             number: f.number.clone(),
         })
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Unary<'a> {
+    pub operator: UnaryOperator,
+    pub operand: Box<Expression<'a>>,
+    ty: Type<'a>,
+}
+
+impl<'a> Unary<'a> {
+    fn from_ast(e: &ast::UnaryOperatorExpression) -> Result<Unary<'a>, Error> {
+        let operand = Expression::from_ast(&e.operand.node)?; 
+        let ty = operand.ty().clone();
+
+        Ok(Unary {
+            operator: e.operator.node.clone(),
+            operand: operand,
+            ty: ty,
+        })
+    }
+
+    fn ty(&self) -> &Type<'a> {
+        &self.ty
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Binary<'a> {
+    pub operator: BinaryOperator,
+    pub lhs: Box<Expression<'a>>,
+    pub rhs: Box<Expression<'a>>,
+    ty: Type<'a>,
+}
+
+impl<'a> Binary<'a> {
+    fn from_ast(e: &ast::BinaryOperatorExpression) -> Result<Binary<'a>, Error> {
+        let lhs = Expression::from_ast(&e.lhs.node)?;
+        let rhs = Expression::from_ast(&e.rhs.node)?;
+        let ty = binop_type(lhs.ty(), rhs.ty())?;
+
+        Ok(Binary {
+            operator: e.operator.node.clone(),
+            lhs: lhs,
+            rhs: rhs,
+            ty: ty,
+        })
+    }
+
+    fn ty(&self) -> &Type<'a> {
+        &self.ty
+    }
+}
+
+fn binop_type<'a>(lhs: &Type<'a>, rhs: &Type<'a>) -> Result<Type<'a>, Error> {
+    if lhs == rhs {
+        Ok(lhs.clone())
+    } else {
+        unimplemented!()
     }
 }

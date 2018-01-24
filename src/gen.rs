@@ -119,6 +119,8 @@ pub fn write_expr_as_ty<'a, 'w>(
 pub fn write_expr<'a, 'w>(env: &mut Env<'w>, expr: &expr::Expression<'a>) -> Result {
     match *expr {
         expr::Expression::Constant(ref c) => write_const(env, c),
+        expr::Expression::Unary(ref e) => write_expr_unary(env, e),
+        expr::Expression::Binary(ref e) => write_expr_binary(env, e),
     }
 }
 
@@ -151,6 +153,39 @@ where
     write!(env, ") as ")?;
     write_type_ref(env, ty)?;
     Ok(())
+}
+
+fn write_expr_unary<'a, 'w>(env: &mut Env<'w>, e: &expr::Unary<'a>) -> Result {
+    let op = match e.operator {
+        expr::UnaryOperator::Minus => "-",
+        expr::UnaryOperator::Plus => "+",
+        expr::UnaryOperator::Complement => "!",
+        expr::UnaryOperator::Negate => "!",
+        _ => unimplemented!(),
+    };
+
+    write!(env, "{}(", op)?;
+    write_expr(env, &e.operand)?;
+    write!(env, ")")
+}
+
+fn write_expr_binary<'a, 'w>(env: &mut Env<'w>, e: &expr::Binary<'a>) -> Result {
+    let op = match e.operator {
+        expr::BinaryOperator::Multiply => "*",
+        expr::BinaryOperator::Divide => "/",
+        expr::BinaryOperator::Modulo => "%",
+        expr::BinaryOperator::Plus => "+",
+        expr::BinaryOperator::Minus => "-",
+        expr::BinaryOperator::ShiftLeft => "<<",
+        expr::BinaryOperator::ShiftRight => ">>",
+        _ => unimplemented!(),
+    };
+
+    write!(env, "(")?;
+    write_expr(env, &e.lhs)?;
+    write!(env, ") {} (", op)?;
+    write_expr(env, &e.rhs)?;
+    write!(env, ")")
 }
 
 fn write_struct_tag<'a, 'w>(env: &mut Env<'w>, s: Ref<'a, Struct<'a>>) -> Result {
@@ -402,5 +437,13 @@ fn float_const() {
     check!(
         "double f = 0.1f;",
         "#[no_mangle]\npub static mut f: c_double = ((0.1) as c_float) as c_double;\n"
+    );
+}
+
+#[test]
+fn epxr() {
+    check!(
+        "int f = -1 + 1;",
+        "#[no_mangle]\npub static mut f: c_int = (-((1) as c_int)) + ((1) as c_int);\n"
     );
 }
