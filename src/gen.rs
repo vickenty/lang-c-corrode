@@ -295,6 +295,7 @@ fn translate(s: &str) -> String {
     let mut buf = Vec::new();
     let parse = lang_c::driver::parse_preprocessed(&Default::default(), s.into()).unwrap();
     let ir = interpret_translation_unit(alloc, &parse.unit).unwrap();
+    ir.run_passes().unwrap();
     write_translation_unit(&mut Env::new(&mut buf), &ir).unwrap();
     let s = String::from_utf8(buf).unwrap();
     syn::parse_str::<syn::File>(&s).unwrap();
@@ -338,8 +339,8 @@ fn test_anon_struct() {
         "\
          #[no_mangle]\n\
          pub static mut v: Generated_0 = Generated_0 {\n\
-         anon_0: Generated_1 {\na: 0,\n},\n\
-         anon_1: Generated_2 {\nc: 0,\nd: 0,\n},\n\
+         anon_0: Generated_1 {\na: (0) as c_int,\n},\n\
+         anon_1: Generated_2 {\nc: (0) as c_int,\nd: (0) as c_int,\n},\n\
          };\n\
          #[repr(C)]\n\
          pub struct Generated_0 {\npub anon_0: Generated_1,\npub anon_1: Generated_2,\n}\n\

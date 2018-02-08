@@ -280,6 +280,27 @@ pub struct Unit<'a> {
     pub items: Vec<Item<'a>>,
 }
 
+impl<'a> Unit<'a> {
+    pub fn run_passes(&self) -> Result<(), Error> {
+        self.add_static_initializers()?;
+
+        Ok(())
+    }
+
+    pub fn add_static_initializers(&self) -> Result<(), Error> {
+        for item in &self.items {
+            if let Item::Variable(ref v) = *item {
+                let mut init = v.initial.borrow_mut();
+                if init.is_none() {
+                    *init = Some(expr::Expression::new_zero(v.ty.ty.clone())?)
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Item<'a> {
     Variable(Ref<'a, Variable<'a>>),
@@ -1358,23 +1379,5 @@ pub fn interpret_translation_unit<'a>(
 
     env.finalize(&mut items);
 
-    add_initializers(&items)?;
-
     Ok(Unit { items: items })
-}
-
-fn add_initializers<'a>(items: &[Item<'a>]) -> Result<(), Error> {
-    for item in items {
-        match *item {
-            Item::Variable(ref v) => {
-                let mut init = v.initial.borrow_mut();
-                if init.is_none() {
-                    *init = Some(expr::Expression::new_zero(v.ty.ty.clone())?)
-                }
-            }
-            _ => (),
-        }
-    }
-
-    Ok(())
 }
