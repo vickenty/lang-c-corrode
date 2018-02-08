@@ -1356,5 +1356,23 @@ pub fn interpret_translation_unit<'a>(
 
     env.finalize(&mut items);
 
+    add_initializers(&items)?;
+
     Ok(Unit { items: items })
+}
+
+fn add_initializers<'a>(items: &[Item<'a>]) -> Result<(), Error> {
+    for item in items {
+        match *item {
+            Item::Variable(ref v) => {
+                let mut init = v.initial.borrow_mut();
+                if init.is_none() {
+                    *init = Some(expr::Expression::new_zero(v.ty.ty.clone())?)
+                }
+            }
+            _ => (),
+        }
+    }
+
+    Ok(())
 }

@@ -13,6 +13,30 @@ pub enum Expression<'a> {
 }
 
 impl<'a> Expression<'a> {
+    pub fn new_zero(ty: Type<'a>) -> Result<Box<Expression<'a>>, Error> {
+        Ok(Box::new(match ty {
+            Type::Void => return Err("cannot create value of type void"),
+            Type::Char
+            | Type::SChar
+            | Type::UChar
+            | Type::SInt
+            | Type::UInt
+            | Type::SShort
+            | Type::UShort
+            | Type::SLong
+            | Type::ULong
+            | Type::SLongLong
+            | Type::ULongLong
+            | Type::Bool => {
+                Expression::Constant(Box::new(Constant::Integer(Integer::new_zero(ty))))
+            }
+            Type::Float | Type::Double => {
+                Expression::Constant(Box::new(Constant::Float(Float::new_zero(ty))))
+            }
+            _ => unimplemented!(),
+        }))
+    }
+
     pub fn from_ast(expr: &ast::Expression) -> Result<Box<Expression<'a>>, Error> {
         Ok(Box::new(match *expr {
             ast::Expression::Constant(ref c) => {
@@ -75,6 +99,14 @@ pub struct Integer<'a> {
 }
 
 impl<'a> Integer<'a> {
+    fn new_zero(ty: Type<'a>) -> Integer<'a> {
+        Integer {
+            ty: ty,
+            base: ast::IntegerBase::Decimal,
+            number: "0".into(),
+        }
+    }
+
     fn guess_type(i: &ast::Integer) -> Result<Type<'a>, Error> {
         use std::os::raw;
 
@@ -128,6 +160,13 @@ pub struct Float<'a> {
 }
 
 impl<'a> Float<'a> {
+    fn new_zero(ty: Type<'a>) -> Float<'a> {
+        Float {
+            ty: ty,
+            number: "0.0".into(),
+        }
+    }
+
     fn from_ast(f: &ast::Float) -> Result<Float<'a>, Error> {
         match f.base {
             ast::FloatBase::Decimal => (),

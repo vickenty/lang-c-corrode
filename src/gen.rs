@@ -3,7 +3,7 @@ use std::io::Write;
 use std::fmt;
 
 use super::expr;
-use super::{Field, Item, QualType, Ref, Struct, StructKind, Type, Unit, Variable};
+use super::{Field, Item, Ref, Struct, StructKind, Type, Unit, Variable};
 
 pub type Result = io::Result<()>;
 
@@ -61,10 +61,7 @@ fn write_static_define<'a, 'w>(env: &mut Env<'w>, var: Ref<'a, Variable<'a>>) ->
     write!(env, "pub static mut {}: ", var.name)?;
     write_type_ref(env, &var.ty.ty)?;
     write!(env, " = ")?;
-    match *var.initial.borrow() {
-        Some(ref expr) => write_expr_as_ty(env, expr, &var.ty.ty)?,
-        None => write_zero_const(env, &var.ty)?,
-    }
+    write_expr_as_ty(env, var.initial.borrow().as_ref().expect("uninitialized static"), &var.ty.ty)?;
     writeln!(env.output, ";")
 }
 
@@ -72,36 +69,6 @@ fn write_static_extern<'a, 'w>(env: &mut Env<'w>, var: Ref<'a, Variable<'a>>) ->
     write!(env, "extern {{ pub static mut {}: ", var.name)?;
     write_type_ref(env, &var.ty.ty)?;
     writeln!(env.output, "; }}")
-}
-
-pub fn write_zero_const<'a, 'w>(env: &mut Env<'w>, ty: &QualType<'a>) -> Result {
-    match ty.ty {
-        Type::Void => unimplemented!(),
-        Type::Char
-        | Type::SChar
-        | Type::UChar
-        | Type::SInt
-        | Type::UInt
-        | Type::SShort
-        | Type::UShort
-        | Type::SLong
-        | Type::ULong
-        | Type::SLongLong
-        | Type::ULongLong
-        | Type::Bool => write!(env, "0"),
-        Type::Float | Type::Double => write!(env, "0.0"),
-        Type::Struct(s) => {
-            write_struct_tag(env, s)?;
-            write_struct_fields(
-                env,
-                false,
-                s,
-                &mut |env, field| write_zero_const(env, &field.ty),
-            )
-        }
-        Type::Pointer(_) => write!(env, "0 as *mut _"),
-        _ => unimplemented!(),
-    }
 }
 
 pub fn write_expr_as_ty<'a, 'w>(
