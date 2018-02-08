@@ -40,12 +40,14 @@ impl<'a> Alloc<'a> {
 #[derive(PartialEq)]
 pub struct Ref<'a, T: 'a>(&'a T);
 
+pub type RefId = usize;
+
 impl<'a, T: PartialEq> Ref<'a, T> {
     pub fn same_as(&self, other: &Self) -> bool {
         self.0 as *const _ == other.0 as *const _
     }
 
-    pub fn id(&self) -> usize {
+    pub fn id(&self) -> RefId {
         self.0 as *const _ as usize
     }
 }
@@ -1289,9 +1291,11 @@ fn derive_func_type_kr<'a>(
     };
 
     let params = fs.iter()
-        .map(|id| Parameter {
-            name: Some(id.node.name.clone()),
-            ty: default_ty.clone(),
+        .map(|id| {
+            Parameter {
+                name: Some(id.node.name.clone()),
+                ty: default_ty.clone(),
+            }
         })
         .collect();
 

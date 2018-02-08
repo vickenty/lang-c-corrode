@@ -1,5 +1,7 @@
+use std::collections::HashMap;
+
 use ast;
-use {Error, Type};
+use {Error, Ref, RefId, Struct, Type};
 
 pub use ast::BinaryOperator;
 pub use ast::UnaryOperator;
@@ -10,6 +12,7 @@ pub enum Expression<'a> {
     Constant(Box<Constant<'a>>),
     Unary(Box<Unary<'a>>),
     Binary(Box<Binary<'a>>),
+    Struct(Box<StructValue<'a>>),
 }
 
 impl<'a> Expression<'a> {
@@ -33,6 +36,7 @@ impl<'a> Expression<'a> {
             Type::Float | Type::Double => {
                 Expression::Constant(Box::new(Constant::Float(Float::new_zero(ty))))
             }
+            Type::Struct(sty) => Expression::Struct(Box::new(StructValue::new_zero(sty)?)),
             _ => unimplemented!(),
         }))
     }
@@ -59,11 +63,12 @@ impl<'a> Expression<'a> {
         }
     }
 
-    pub fn ty(&self) -> &Type<'a> {
+    pub fn ty(&self) -> Type<'a> {
         match *self {
             Expression::Constant(ref c) => c.ty(),
             Expression::Unary(ref e) => e.ty(),
             Expression::Binary(ref e) => e.ty(),
+            Expression::Struct(ref v) => Type::Struct(v.def),
         }
     }
 }
@@ -83,10 +88,10 @@ impl<'a> Constant<'a> {
         })
     }
 
-    fn ty(&self) -> &Type<'a> {
+    fn ty(&self) -> Type<'a> {
         match *self {
-            Constant::Integer(ref i) => &i.ty,
-            Constant::Float(ref f) => &f.ty,
+            Constant::Integer(ref i) => i.ty.clone(),
+            Constant::Float(ref f) => f.ty.clone(),
         }
     }
 }
@@ -206,8 +211,8 @@ impl<'a> Unary<'a> {
         })
     }
 
-    fn ty(&self) -> &Type<'a> {
-        &self.ty
+    fn ty(&self) -> Type<'a> {
+        self.ty.clone()
     }
 }
 
@@ -223,7 +228,7 @@ impl<'a> Binary<'a> {
     fn from_ast(e: &ast::BinaryOperatorExpression) -> Result<Binary<'a>, Error> {
         let lhs = Expression::from_ast(&e.lhs.node)?;
         let rhs = Expression::from_ast(&e.rhs.node)?;
-        let ty = binop_type(lhs.ty(), rhs.ty())?;
+        let ty = binop_type(&lhs.ty(), &rhs.ty())?;
 
         Ok(Binary {
             operator: e.operator.node.clone(),
@@ -233,8 +238,8 @@ impl<'a> Binary<'a> {
         })
     }
 
-    fn ty(&self) -> &Type<'a> {
-        &self.ty
+    fn ty(&self) -> Type<'a> {
+        self.ty.clone()
     }
 }
 
@@ -243,5 +248,32 @@ fn binop_type<'a>(lhs: &Type<'a>, rhs: &Type<'a>) -> Result<Type<'a>, Error> {
         Ok(lhs.clone())
     } else {
         unimplemented!()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructValue<'a> {
+    pub def: Ref<'a, Struct<'a>>,
+    pub values: HashMap<RefId, Box<Expression<'a>>>,
+}
+
+impl<'a> StructValue<'a> {
+    fn new_zero(def: Ref<'a, Struct<'a>>) -> Result<StructValue<'a>, Error> {
+        let mut values = HashMap::new();
+
+        let fields = def.fields.borrow();
+        let fields = match *fields {
+            Some(ref fields) => fields,
+            None => return Err("can't create value for incomplete type"),
+        };
+
+        for field in fields {
+            values.insert(field.id(), Expression::new_zero(field.ty.ty.clone())?);
+        }
+
+        Ok(StructValue {
+            def: def,
+            values: values,
+        })
     }
 }

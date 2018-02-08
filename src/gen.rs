@@ -80,7 +80,7 @@ pub fn write_expr_as_ty<'a, 'w>(
     expr: &expr::Expression<'a>,
     ty: &Type<'a>,
 ) -> Result {
-    if expr.ty() != ty {
+    if expr.ty() != *ty {
         write_cast_expr(env, ty, |env| write_expr(env, expr))
     } else {
         write_expr(env, expr)
@@ -92,6 +92,7 @@ pub fn write_expr<'a, 'w>(env: &mut Env<'w>, expr: &expr::Expression<'a>) -> Res
         expr::Expression::Constant(ref c) => write_const(env, c),
         expr::Expression::Unary(ref e) => write_expr_unary(env, e),
         expr::Expression::Binary(ref e) => write_expr_binary(env, e),
+        expr::Expression::Struct(ref v) => write_expr_struct_val(env, v),
     }
 }
 
@@ -159,6 +160,16 @@ fn write_expr_binary<'a, 'w>(env: &mut Env<'w>, e: &expr::Binary<'a>) -> Result 
     write!(env, ")")
 }
 
+fn write_expr_struct_val<'a, 'w>(env: &mut Env<'w>, v: &expr::StructValue<'a>) -> Result {
+    write_struct_tag(env, v.def)?;
+    write_struct_fields(env, false, v.def, &mut |env, f| {
+        write_expr(
+            env,
+            v.values.get(&f.id()).expect("missing value for a field"),
+        )
+    })
+}
+
 fn write_struct_tag<'a, 'w>(env: &mut Env<'w>, s: Ref<'a, Struct<'a>>) -> Result {
     write!(
         env,
@@ -205,8 +216,8 @@ pub fn write_struct_def<'a, 'w>(env: &mut Env<'w>, s: Ref<'a, Struct<'a>>) -> Re
 fn write_struct_field<'a, 'w>(
     env: &mut Env<'w>,
     is_def: bool,
-    field: &Field<'a>,
-    f: &mut FnMut(&mut Env<'w>, &Field<'a>) -> Result,
+    field: Ref<'a, Field<'a>>,
+    f: &mut FnMut(&mut Env<'w>, Ref<'a, Field<'a>>) -> Result,
 ) -> Result {
     if is_def {
         write!(env, "pub ")?;
@@ -230,13 +241,13 @@ fn write_struct_fields<'a, 'w>(
     env: &mut Env<'w>,
     is_def: bool,
     s: Ref<'a, Struct<'a>>,
-    f: &mut FnMut(&mut Env<'w>, &Field<'a>) -> Result,
+    f: &mut FnMut(&mut Env<'w>, Ref<'a, Field<'a>>) -> Result,
 ) -> Result {
     writeln!(env.output, " {{")?;
 
     if let Some(ref fields) = *s.fields.borrow() {
         for field in fields {
-            write_struct_field(env, is_def, &*field, f)?;
+            write_struct_field(env, is_def, *field, f)?;
 
             if !is_def && s.kind == StructKind::Union {
                 break;
