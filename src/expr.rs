@@ -196,7 +196,7 @@ pub struct Unary<'a> {
 
 impl<'a> Unary<'a> {
     fn from_ast(e: &ast::UnaryOperatorExpression) -> Result<Unary<'a>, Error> {
-        let operand = Expression::from_ast(&e.operand.node)?; 
+        let operand = Expression::from_ast(&e.operand.node)?;
         let ty = operand.ty().clone();
 
         Ok(Unary {

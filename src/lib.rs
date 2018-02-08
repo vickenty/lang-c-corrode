@@ -1289,11 +1289,9 @@ fn derive_func_type_kr<'a>(
     };
 
     let params = fs.iter()
-        .map(|id| {
-            Parameter {
-                name: Some(id.node.name.clone()),
-                ty: default_ty.clone(),
-            }
+        .map(|id| Parameter {
+            name: Some(id.node.name.clone()),
+            ty: default_ty.clone(),
         })
         .collect();
 
