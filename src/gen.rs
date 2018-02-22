@@ -312,7 +312,7 @@ fn test_static() {
     check!(
         "typedef int *ip; static ip x;",
         "#[no_mangle]\n\
-         pub static mut x: *mut c_int = 0 as *mut _;\n"
+         pub static mut x: *mut c_int = (0) as *mut c_int;\n"
     );
 }
 
@@ -357,14 +357,14 @@ fn test_anon_struct_clobber() {
     check!(
         "int Generated_0; struct { int anon_0; struct { int anon_1; }; } Generated_1; struct Generated_0 *p;",
         "#[no_mangle]\n\
-         pub static mut Generated_0: c_int = 0;\n\
+         pub static mut Generated_0: c_int = (0) as c_int;\n\
          #[no_mangle]\n\
          pub static mut Generated_1: Generated_2 = Generated_2 {\n\
-         anon_0: 0,\n\
-         anon_1: Generated_3 {\nanon_1: 0,\n},\n\
+         anon_0: (0) as c_int,\n\
+         anon_1: Generated_3 {\nanon_1: (0) as c_int,\n},\n\
          };\n\
          #[no_mangle]\n\
-         pub static mut p: *mut Generated_0_ = 0 as *mut _;\n\
+         pub static mut p: *mut Generated_0_ = (0) as *mut Generated_0_;\n\
          #[repr(C)]\npub struct Generated_2 {\npub anon_0: c_int,\npub anon_1: Generated_3,\n}\n\
          #[repr(C)]\npub struct Generated_3 {\npub anon_1: c_int,\n}\n\
          pub enum Generated_0_{}\n\

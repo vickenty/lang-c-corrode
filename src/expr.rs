@@ -36,6 +36,9 @@ impl<'a> Expression<'a> {
             Type::Float | Type::Double => {
                 Expression::Constant(Box::new(Constant::Float(Float::new_zero(ty))))
             }
+            Type::Pointer(_) => {
+                Expression::Constant(Box::new(Constant::Integer(Integer::new_zero(ty.clone()))))
+            }
             Type::Struct(sty) => Expression::Struct(Box::new(StructValue::new_zero(sty)?)),
             _ => unimplemented!(),
         }))
