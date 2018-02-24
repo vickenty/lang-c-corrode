@@ -431,3 +431,15 @@ fn epxr() {
         "#[no_mangle]\npub static mut f: c_int = (-((1) as c_int)) + ((1) as c_int);\n"
     );
 }
+
+#[test]
+fn int_zero() {
+    check!(
+        "int x = 0;",
+        "#[no_mangle]\npub static mut x: c_int = (0) as c_int;\n"
+    );
+    check!(
+        "int *p = 0;",
+        "#[no_mangle]\npub static mut p: *mut c_int = ((0) as c_int) as *mut c_int;\n"
+    );
+}
