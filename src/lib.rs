@@ -283,6 +283,7 @@ pub struct Unit<'a> {
 impl<'a> Unit<'a> {
     pub fn run_passes(&self) -> Result<(), Error> {
         self.add_static_initializers()?;
+        self.add_static_casts()?;
 
         Ok(())
     }
@@ -293,6 +294,20 @@ impl<'a> Unit<'a> {
                 let mut init = v.initial.borrow_mut();
                 if init.is_none() {
                     *init = Some(expr::Expression::new_zero(v.ty.ty.clone())?)
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn add_static_casts(&self) -> Result<(), Error> {
+        for item in &self.items {
+            if let Item::Variable(ref v) = *item {
+                if let Some(ref mut expr) = *v.initial.borrow_mut() {
+                    if expr.ty() != v.ty.ty {
+                        *expr = expr::Expression::new_cast(*expr.clone(), v.ty.ty.clone())?;
+                    }
                 }
             }
         }

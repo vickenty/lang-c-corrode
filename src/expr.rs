@@ -13,6 +13,7 @@ pub enum Expression<'a> {
     Unary(Box<Unary<'a>>),
     Binary(Box<Binary<'a>>),
     Struct(Box<StructValue<'a>>),
+    Cast(Box<Cast<'a>>),
 }
 
 impl<'a> Expression<'a> {
@@ -44,6 +45,10 @@ impl<'a> Expression<'a> {
         }))
     }
 
+    pub fn new_cast(expr: Expression<'a>, ty: Type<'a>) -> Result<Box<Expression<'a>>, Error> {
+        Ok(Box::new(Expression::Cast(Box::new(Cast::new(expr, ty)?))))
+    }
+
     pub fn from_ast(expr: &ast::Expression) -> Result<Box<Expression<'a>>, Error> {
         Ok(Box::new(match *expr {
             ast::Expression::Constant(ref c) => {
@@ -72,6 +77,7 @@ impl<'a> Expression<'a> {
             Expression::Unary(ref e) => e.ty(),
             Expression::Binary(ref e) => e.ty(),
             Expression::Struct(ref v) => Type::Struct(v.def),
+            Expression::Cast(ref c) => c.ty.clone(),
         }
     }
 }
@@ -278,5 +284,17 @@ impl<'a> StructValue<'a> {
             def: def,
             values: values,
         })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Cast<'a> {
+    pub expr: Expression<'a>,
+    pub ty: Type<'a>,
+}
+
+impl<'a> Cast<'a> {
+    fn new(expr: Expression<'a>, ty: Type<'a>) -> Result<Cast<'a>, Error> {
+        Ok(Cast { expr: expr, ty: ty })
     }
 }

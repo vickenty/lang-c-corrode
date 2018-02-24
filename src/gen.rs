@@ -61,10 +61,9 @@ fn write_static_define<'a, 'w>(env: &mut Env<'w>, var: Ref<'a, Variable<'a>>) ->
     write!(env, "pub static mut {}: ", var.name)?;
     write_type_ref(env, &var.ty.ty)?;
     write!(env, " = ")?;
-    write_expr_as_ty(
+    write_expr(
         env,
         var.initial.borrow().as_ref().expect("uninitialized static"),
-        &var.ty.ty,
     )?;
     writeln!(env.output, ";")
 }
@@ -93,6 +92,7 @@ pub fn write_expr<'a, 'w>(env: &mut Env<'w>, expr: &expr::Expression<'a>) -> Res
         expr::Expression::Unary(ref e) => write_expr_unary(env, e),
         expr::Expression::Binary(ref e) => write_expr_binary(env, e),
         expr::Expression::Struct(ref v) => write_expr_struct_val(env, v),
+        expr::Expression::Cast(ref c) => write_expr_cast(env, c),
     }
 }
 
@@ -257,6 +257,10 @@ fn write_struct_fields<'a, 'w>(
 
     write!(env, "}}")?;
     Ok(())
+}
+
+fn write_expr_cast<'a, 'w>(env: &mut Env<'w>, cast: &expr::Cast<'a>) -> Result {
+    write_cast_expr(env, &cast.ty, |env| write_expr(env, &cast.expr))
 }
 
 pub fn write_type_ref<'a, 'w>(env: &mut Env<'w>, ty: &Type<'a>) -> Result {
