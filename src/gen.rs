@@ -74,18 +74,6 @@ fn write_static_extern<'a, 'w>(env: &mut Env<'w>, var: Ref<'a, Variable<'a>>) ->
     writeln!(env.output, "; }}")
 }
 
-pub fn write_expr_as_ty<'a, 'w>(
-    env: &mut Env<'w>,
-    expr: &expr::Expression<'a>,
-    ty: &Type<'a>,
-) -> Result {
-    if expr.ty() != *ty {
-        write_cast_expr(env, ty, |env| write_expr(env, expr))
-    } else {
-        write_expr(env, expr)
-    }
-}
-
 pub fn write_expr<'a, 'w>(env: &mut Env<'w>, expr: &expr::Expression<'a>) -> Result {
     match *expr {
         expr::Expression::Constant(ref c) => write_const(env, c),
