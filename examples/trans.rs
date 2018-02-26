@@ -11,6 +11,7 @@ fn main() {
     let ast = lang_c::driver::parse_preprocessed(&Default::default(), text).unwrap();
     let alloc = &lang_c_corrode::Alloc::new();
     let ir = lang_c_corrode::interpret_translation_unit(alloc, &ast.unit).unwrap();
+    ir.run_passes().unwrap();
     let stdout = stdout();
     gen::write_translation_unit(&mut gen::Env::new(&mut stdout.lock()), &ir).unwrap();
 }
