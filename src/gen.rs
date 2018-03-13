@@ -3,7 +3,7 @@ use std::io::Write;
 use std::fmt;
 
 use super::expr;
-use super::{Field, Item, Ref, Struct, StructKind, Type, Unit, Variable};
+use super::{Field, Function, FunctionTy, Item, Ref, Struct, StructKind, Type, Unit, Variable};
 
 pub type Result = io::Result<()>;
 
@@ -44,7 +44,7 @@ pub fn write_item<'a, 'w>(env: &mut Env<'w>, item: &Item<'a>) -> Result {
     match *item {
         Item::Struct(s) => write_struct(env, s),
         Item::Variable(var) => write_variable(env, var),
-        Item::Function(_) => unimplemented!(),
+        Item::Function(f) => write_function(env, f),
     }
 }
 
@@ -274,6 +274,37 @@ pub fn write_type_ref<'a, 'w>(env: &mut Env<'w>, ty: &Type<'a>) -> Result {
         }
         _ => unimplemented!(),
     }
+}
+
+fn write_function<'a, 'w>(env: &mut Env<'w>, f: Ref<'a, Function<'a>>) -> Result {
+    write!(env, "extern \"C\" {{\n")?;
+    write!(env, "pub fn {}", f.name)?;
+
+    write_fn_type(env, &f.ty)?;
+
+    write!(env, ";\n}}\n")
+}
+
+fn write_fn_type<'a, 'w>(env: &mut Env<'w>, f: &FunctionTy<'a>) -> Result {
+    write!(env, "(")?;
+    for p in &f.parameters {
+        write_type_ref(env, &p.ty.ty)?;
+        write!(env, ", ")?;
+    }
+    if f.variadic {
+        write!(env, "...")?;
+    }
+    write!(env, ")")?;
+
+    match f.return_type.ty {
+        Type::Void => (),
+        ref ty => {
+            write!(env, " -> ")?;
+            write_type_ref(env, ty)?;
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
