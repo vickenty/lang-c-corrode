@@ -1,325 +1,257 @@
-use std::io;
-use std::io::Write;
-use std::fmt;
-
 use super::expr;
-use super::{Field, Function, FunctionTy, Item, Ref, Struct, StructKind, Type, Unit, Variable};
+use super::{Function, FunctionTy, Item, Struct, StructKind, Type, Unit, Variable};
 
-pub type Result = io::Result<()>;
+use fmt::{Formatter, ToCode};
 
-pub struct Env<'w> {
-    output: &'w mut (io::Write + 'w),
-}
-
-impl<'a, 'w> io::Write for Env<'w> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.output.write(buf)
-    }
-    fn flush(&mut self) -> io::Result<()> {
-        self.output.flush()
-    }
-    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
-        self.output.write_all(buf)
-    }
-    fn write_fmt(&mut self, fmt: fmt::Arguments) -> io::Result<()> {
-        self.output.write_fmt(fmt)
-    }
-}
-
-impl<'a, 'w> Env<'w> {
-    pub fn new(output: &'w mut io::Write) -> Env<'w> {
-        Env { output: output }
-    }
-}
-
-pub fn write_translation_unit<'a, 'w>(env: &mut Env<'w>, unit: &Unit<'a>) -> Result {
-    for item in &unit.items {
-        write_item(env, item)?;
-    }
-
-    Ok(())
-}
-
-pub fn write_item<'a, 'w>(env: &mut Env<'w>, item: &Item<'a>) -> Result {
-    match *item {
-        Item::Struct(s) => write_struct(env, s),
-        Item::Variable(var) => write_variable(env, var),
-        Item::Function(f) => write_function(env, f),
-    }
-}
-
-pub fn write_variable<'a, 'w>(env: &mut Env<'w>, var: Ref<'a, Variable<'a>>) -> Result {
-    if var.is_defined() {
-        write_static_define(env, var)
-    } else {
-        write_static_extern(env, var)
-    }
-}
-
-fn write_static_define<'a, 'w>(env: &mut Env<'w>, var: Ref<'a, Variable<'a>>) -> Result {
-    writeln!(env.output, "#[no_mangle]")?;
-    write!(env, "pub static mut {}: ", var.name)?;
-    write_type_ref(env, &var.ty.ty)?;
-    write!(env, " = ")?;
-    write_expr(
-        env,
-        var.initial.borrow().as_ref().expect("uninitialized static"),
-    )?;
-    writeln!(env.output, ";")
-}
-
-fn write_static_extern<'a, 'w>(env: &mut Env<'w>, var: Ref<'a, Variable<'a>>) -> Result {
-    write!(env, "extern {{ pub static mut {}: ", var.name)?;
-    write_type_ref(env, &var.ty.ty)?;
-    writeln!(env.output, "; }}")
-}
-
-pub fn write_expr<'a, 'w>(env: &mut Env<'w>, expr: &expr::Expression<'a>) -> Result {
-    match *expr {
-        expr::Expression::Constant(ref c) => write_const(env, c),
-        expr::Expression::Unary(ref e) => write_expr_unary(env, e),
-        expr::Expression::Binary(ref e) => write_expr_binary(env, e),
-        expr::Expression::Struct(ref v) => write_expr_struct_val(env, v),
-        expr::Expression::Cast(ref c) => write_expr_cast(env, c),
-    }
-}
-
-pub fn write_const<'a, 'w>(env: &mut Env<'w>, c: &expr::Constant<'a>) -> Result {
-    match *c {
-        expr::Constant::Integer(ref i) => {
-            write_cast_expr(env, &i.ty, |env| {
-                match i.base {
-                    expr::IntegerBase::Octal => write!(env, "0o")?,
-                    expr::IntegerBase::Hexademical => write!(env, "0x")?,
-                    expr::IntegerBase::Decimal => (),
-                }
-                write!(env, "{}", i.number)
-            })?;
-        }
-
-        expr::Constant::Float(ref f) => {
-            write_cast_expr(env, &f.ty, |env| write!(env, "{}", f.number))?;
+impl<'a> ToCode for Unit<'a> {
+    fn to_code(&self, fmt: &mut Formatter) {
+        for item in &self.items {
+            item.to_code(fmt);
         }
     }
-    Ok(())
 }
 
-fn write_cast_expr<'a, 'w, F>(env: &mut Env<'w>, ty: &Type<'a>, mut f: F) -> Result
-where
-    F: FnMut(&mut Env<'w>) -> Result,
-{
-    write!(env, "(")?;
-    f(env)?;
-    write!(env, ") as ")?;
-    write_type_ref(env, ty)?;
-    Ok(())
-}
-
-fn write_expr_unary<'a, 'w>(env: &mut Env<'w>, e: &expr::Unary<'a>) -> Result {
-    let op = match e.operator {
-        expr::UnaryOperator::Minus => "-",
-        expr::UnaryOperator::Plus => "+",
-        expr::UnaryOperator::Complement => "!",
-        expr::UnaryOperator::Negate => "!",
-        _ => unimplemented!(),
-    };
-
-    write!(env, "{}(", op)?;
-    write_expr(env, &e.operand)?;
-    write!(env, ")")
-}
-
-fn write_expr_binary<'a, 'w>(env: &mut Env<'w>, e: &expr::Binary<'a>) -> Result {
-    let op = match e.operator {
-        expr::BinaryOperator::Multiply => "*",
-        expr::BinaryOperator::Divide => "/",
-        expr::BinaryOperator::Modulo => "%",
-        expr::BinaryOperator::Plus => "+",
-        expr::BinaryOperator::Minus => "-",
-        expr::BinaryOperator::ShiftLeft => "<<",
-        expr::BinaryOperator::ShiftRight => ">>",
-        _ => unimplemented!(),
-    };
-
-    write!(env, "(")?;
-    write_expr(env, &e.lhs)?;
-    write!(env, ") {} (", op)?;
-    write_expr(env, &e.rhs)?;
-    write!(env, ")")
-}
-
-fn write_expr_struct_val<'a, 'w>(env: &mut Env<'w>, v: &expr::StructValue<'a>) -> Result {
-    write_struct_tag(env, v.def)?;
-    write_struct_fields(env, false, v.def, &mut |env, f| {
-        write_expr(
-            env,
-            v.values.get(&f.id()).expect("missing value for a field"),
-        )
-    })
-}
-
-fn write_struct_tag<'a, 'w>(env: &mut Env<'w>, s: Ref<'a, Struct<'a>>) -> Result {
-    write!(
-        env,
-        "{}",
-        s.rust_name
-            .borrow()
-            .as_ref()
-            .expect("struct without rust_name")
-    )
-}
-
-pub fn write_struct<'a, 'w>(env: &mut Env<'w>, s: Ref<'a, Struct<'a>>) -> Result {
-    if s.is_complete_ty() {
-        write_struct_def(env, s)
-    } else {
-        write_struct_opaque(env, s)
+impl<'a> ToCode for Item<'a> {
+    fn to_code(&self, fmt: &mut Formatter) {
+        match *self {
+            Item::Struct(s) => s.to_code(fmt),
+            Item::Variable(var) => var.to_code(fmt),
+            Item::Function(f) => f.to_code(fmt),
+        }
     }
 }
 
-pub fn write_struct_opaque<'a, 'w>(env: &mut Env<'w>, s: Ref<'a, Struct<'a>>) -> Result {
-    write!(env, "pub enum ")?;
-    write_struct_tag(env, s)?;
-    writeln!(env.output, "{{}}")
-}
-
-pub fn write_struct_def<'a, 'w>(env: &mut Env<'w>, s: Ref<'a, Struct<'a>>) -> Result {
-    let kind = match s.kind {
-        StructKind::Struct => "struct",
-        StructKind::Union => "union",
-    };
-
-    writeln!(env.output, "#[repr(C)]")?;
-
-    write!(env, "pub {} ", kind)?;
-    write_struct_tag(env, s)?;
-
-    write_struct_fields(env, true, s, &mut |env, field| {
-        write_type_ref(env, &field.ty.ty)
-    })?;
-
-    writeln!(env.output)
-}
-
-fn write_struct_field<'a, 'w>(
-    env: &mut Env<'w>,
-    is_def: bool,
-    field: Ref<'a, Field<'a>>,
-    f: &mut FnMut(&mut Env<'w>, Ref<'a, Field<'a>>) -> Result,
-) -> Result {
-    if is_def {
-        write!(env, "pub ")?;
+impl<'a> ToCode for Variable<'a> {
+    fn to_code(&self, fmt: &mut Formatter) {
+        if self.is_defined() {
+            static_define(self, fmt);
+        } else {
+            static_extern(self, fmt);
+        }
     }
-
-    write!(
-        env,
-        "{}: ",
-        field
-            .rust_name
-            .borrow()
-            .as_ref()
-            .expect("field without rust_name")
-    )?;
-
-    f(env, field)?;
-    writeln!(env.output, ",")
 }
 
-fn write_struct_fields<'a, 'w>(
-    env: &mut Env<'w>,
-    is_def: bool,
-    s: Ref<'a, Struct<'a>>,
-    f: &mut FnMut(&mut Env<'w>, Ref<'a, Field<'a>>) -> Result,
-) -> Result {
-    writeln!(env.output, " {{")?;
+fn static_define(var: &Variable, fmt: &mut Formatter) {
+    tokln!(fmt, "#[no_mangle]");
+    tokln!(fmt, "pub static mut ", var.name, ": ", var.ty.ty, " = ", var.initial, ";");
+}
 
-    if let Some(ref fields) = *s.fields.borrow() {
-        for field in fields {
-            write_struct_field(env, is_def, *field, f)?;
+fn static_extern<'a, 'w>(var: &Variable, fmt: &mut Formatter) {
+    tokln!(fmt, "extern {");
+    block!(fmt, {
+        tokln!(fmt, "pub static mut ", var.name, ": ", var.ty.ty, ";");
+    });
+    tokln!(fmt, "}");
+}
 
-            if !is_def && s.kind == StructKind::Union {
-                break;
+impl<'a> ToCode for expr::Expression<'a> {
+    fn to_code(&self, fmt: &mut Formatter) {
+        match *self {
+            expr::Expression::Constant(ref c) => c.to_code(fmt),
+            expr::Expression::Unary(ref e) => e.to_code(fmt),
+            expr::Expression::Binary(ref e) => e.to_code(fmt),
+            expr::Expression::Struct(ref v) => v.to_code(fmt),
+            expr::Expression::Cast(ref c) => c.to_code(fmt),
+        }
+    }
+}
+
+impl<'a> ToCode for expr::Constant<'a> {
+    fn to_code(&self, fmt: &mut Formatter) {
+        match *self {
+            expr::Constant::Integer(ref i) => i.to_code(fmt),
+            expr::Constant::Float(ref f) => f.to_code(fmt),
+        }
+    }
+}
+
+impl<'a> ToCode for expr::Integer<'a> {
+    fn to_code(&self, fmt: &mut Formatter) {
+        toks!(fmt, "(", self.base, self.number, ") as ", self.ty);
+    }
+}
+
+impl ToCode for expr::IntegerBase {
+    fn to_code(&self, fmt: &mut Formatter) {
+        match *self {
+            expr::IntegerBase::Decimal => {}
+            expr::IntegerBase::Octal => toks!(fmt, "0o"),
+            expr::IntegerBase::Hexademical => toks!(fmt, "0x"),
+        }
+    }
+}
+
+impl<'a> ToCode for expr::Float<'a> {
+    fn to_code(&self, fmt: &mut Formatter) {
+        toks!(fmt, "(", self.number, ") as ", self.ty);
+    }
+}
+
+impl<'a> ToCode for expr::Unary<'a> {
+    fn to_code(&self, fmt: &mut Formatter) {
+        toks!(fmt, self.operator, "(", self.operand, ")");
+    }
+}
+
+impl ToCode for expr::UnaryOperator {
+    fn to_code(&self, fmt: &mut Formatter) {
+        toks!(
+            fmt,
+            match *self {
+                expr::UnaryOperator::Plus => "+",
+                expr::UnaryOperator::Minus => "-",
+                expr::UnaryOperator::Complement => "!",
+                expr::UnaryOperator::Negate => "!",
+                _ => unimplemented!(),
             }
+        );
+    }
+}
+
+impl<'a> ToCode for expr::Binary<'a> {
+    fn to_code(&self, fmt: &mut Formatter) {
+        toks!(fmt, "(", self.lhs, ") ", self.operator, " (", self.rhs, ")");
+    }
+}
+
+impl ToCode for expr::BinaryOperator {
+    fn to_code(&self, fmt: &mut Formatter) {
+        toks!(
+            fmt,
+            match *self {
+                expr::BinaryOperator::Multiply => "*",
+                expr::BinaryOperator::Divide => "/",
+                expr::BinaryOperator::Modulo => "%",
+                expr::BinaryOperator::Plus => "+",
+                expr::BinaryOperator::Minus => "-",
+                expr::BinaryOperator::ShiftLeft => "<<",
+                expr::BinaryOperator::ShiftRight => ">>",
+                _ => unimplemented!(),
+            }
+        );
+    }
+}
+
+impl<'a> ToCode for expr::StructValue<'a> {
+    fn to_code(&self, fmt: &mut Formatter) {
+        tokln!(fmt, self.def.rust_name, " {");
+        block!(fmt, {
+            if let Some(ref fields) = *self.def.fields.borrow() {
+                for field in fields {
+                    if let Some(ref val) = self.values.get(&field.id()) {
+                        tokln!(fmt, field.rust_name, ": ", val, ",");
+                    }
+                }
+            }
+        });
+        toks!(fmt, "}");
+    }
+}
+
+impl<'a> ToCode for expr::Cast<'a> {
+    fn to_code(&self, fmt: &mut Formatter) {
+        toks!(fmt, "(", self.expr, ") as ", self.ty);
+    }
+}
+
+impl<'a> ToCode for Struct<'a> {
+    fn to_code(&self, fmt: &mut Formatter) {
+        if self.is_complete_ty() {
+            tokln!(fmt, "#[repr(C)]");
+            tokln!(fmt, "pub ", self.kind, " ", self.rust_name, " {");
+            block!(fmt, {
+                if let Some(ref fields) = *self.fields.borrow() {
+                    for field in fields {
+                        tokln!(fmt, "pub ", field.rust_name, ": ", field.ty.ty, ",");
+                    }
+                }
+            });
+            tokln!(fmt, "}");
+        } else {
+            tokln!(fmt, "pub enum ", self.rust_name, "{}");
         }
     }
-
-    write!(env, "}}")?;
-    Ok(())
 }
 
-fn write_expr_cast<'a, 'w>(env: &mut Env<'w>, cast: &expr::Cast<'a>) -> Result {
-    write_cast_expr(env, &cast.ty, |env| write_expr(env, &cast.expr))
-}
-
-pub fn write_type_ref<'a, 'w>(env: &mut Env<'w>, ty: &Type<'a>) -> Result {
-    match *ty {
-        Type::Void => write!(env, "c_void"),
-        Type::Char => write!(env, "c_char"),
-        Type::SChar => write!(env, "c_schar"),
-        Type::UChar => write!(env, "c_uchar"),
-        Type::SInt => write!(env, "c_int"),
-        Type::UInt => write!(env, "c_uint"),
-        Type::SShort => write!(env, "c_short"),
-        Type::UShort => write!(env, "c_ushort"),
-        Type::SLong => write!(env, "c_long"),
-        Type::ULong => write!(env, "c_ulong"),
-        Type::SLongLong => write!(env, "c_longlong"),
-        Type::ULongLong => write!(env, "c_ulonglong"),
-        Type::Float => write!(env, "c_float"),
-        Type::Double => write!(env, "c_double"),
-        Type::Struct(s) => write_struct_tag(env, s),
-        Type::Pointer(ref ty) => {
-            write!(env, "*mut ")?;
-            write_type_ref(env, &ty.ty)
-        }
-        _ => unimplemented!(),
+impl ToCode for StructKind {
+    fn to_code(&self, fmt: &mut Formatter) {
+        toks!(
+            fmt,
+            match *self {
+                StructKind::Struct => "struct",
+                StructKind::Union => "union",
+            }
+        );
     }
 }
 
-fn write_function<'a, 'w>(env: &mut Env<'w>, f: Ref<'a, Function<'a>>) -> Result {
-    write!(env, "extern \"C\" {{\n")?;
-    write!(env, "pub fn {}", f.name)?;
-
-    write_fn_type(env, &f.ty)?;
-
-    write!(env, ";\n}}\n")
-}
-
-fn write_fn_type<'a, 'w>(env: &mut Env<'w>, f: &FunctionTy<'a>) -> Result {
-    write!(env, "(")?;
-    for p in &f.parameters {
-        write_type_ref(env, &p.ty.ty)?;
-        write!(env, ", ")?;
-    }
-    if f.variadic {
-        write!(env, "...")?;
-    }
-    write!(env, ")")?;
-
-    match f.return_type.ty {
-        Type::Void => (),
-        ref ty => {
-            write!(env, " -> ")?;
-            write_type_ref(env, ty)?;
+impl<'a> ToCode for Type<'a> {
+    fn to_code(&self, fmt: &mut Formatter) {
+        match *self {
+            Type::Void => toks!(fmt, "c_void"),
+            Type::Char => toks!(fmt, "c_char"),
+            Type::SChar => toks!(fmt, "c_schar"),
+            Type::UChar => toks!(fmt, "c_uchar"),
+            Type::SInt => toks!(fmt, "c_int"),
+            Type::UInt => toks!(fmt, "c_uint"),
+            Type::SShort => toks!(fmt, "c_short"),
+            Type::UShort => toks!(fmt, "c_ushort"),
+            Type::SLong => toks!(fmt, "c_long"),
+            Type::ULong => toks!(fmt, "c_ulong"),
+            Type::SLongLong => toks!(fmt, "c_longlong"),
+            Type::ULongLong => toks!(fmt, "c_ulonglong"),
+            Type::Float => toks!(fmt, "c_float"),
+            Type::Double => toks!(fmt, "c_double"),
+            Type::Struct(s) => toks!(fmt, s.rust_name),
+            Type::Pointer(ref ty) => toks!(fmt, "*mut ", ty.ty),
+            _ => unimplemented!(),
         }
     }
-
-    Ok(())
 }
 
-#[cfg(test)]
-use {lang_c, syn};
+impl<'a> ToCode for Function<'a> {
+    fn to_code(&self, fmt: &mut Formatter) {
+        tokln!(fmt, "extern \"C\" {");
+        block!(fmt, {
+            tokln!(fmt, "pub fn ", self.name, self.ty, ";");
+        });
+        tokln!(fmt, "}");
+    }
+}
+
+impl<'a> ToCode for FunctionTy<'a> {
+    fn to_code(&self, fmt: &mut Formatter) {
+        toks!(fmt, "(");
+        for p in &self.parameters {
+            toks!(fmt, p.ty.ty, ", ");
+        }
+        if self.variadic {
+            toks!(fmt, "...");
+        }
+        toks!(fmt, ")");
+
+        match self.return_type.ty {
+            Type::Void => (),
+            ref ty => toks!(fmt, " -> ", ty),
+        }
+    }
+}
+
 #[cfg(test)]
 use super::{interpret_translation_unit, Alloc};
+#[cfg(test)]
+use {fmt, lang_c, syn};
 
 #[cfg(test)]
 fn translate(s: &str) -> String {
     let alloc = &Alloc::new();
     let mut buf = Vec::new();
+
     let parse = lang_c::driver::parse_preprocessed(&Default::default(), s.into()).unwrap();
-    let ir = interpret_translation_unit(alloc, &parse.unit).unwrap();
-    ir.run_passes().unwrap();
-    write_translation_unit(&mut Env::new(&mut buf), &ir).unwrap();
+    let unit = interpret_translation_unit(alloc, &parse.unit).unwrap();
+    unit.run_passes().unwrap();
+    unit.to_code(&mut fmt::Writer::new(&mut buf));
+
     let s = String::from_utf8(buf).unwrap();
     syn::parse_str::<syn::File>(&s).unwrap();
     s
@@ -327,7 +259,9 @@ fn translate(s: &str) -> String {
 
 #[cfg(test)]
 macro_rules! check {
-    ($a:expr, $b:expr) => (assert_eq!(translate($a), $b));
+    ($a:expr, $b:expr) => {
+        assert_eq!(translate($a), $b)
+    };
 }
 
 #[test]
@@ -341,14 +275,14 @@ fn test_static() {
 
 #[test]
 fn test_extern() {
-    check!("extern char x;", "extern { pub static mut x: c_char; }\n");
+    check!("extern char x;", "extern {\npub static mut x: c_char;\n}\n");
 }
 
 #[test]
 fn test_struct() {
     check!(
         "extern struct a { int b; } c;",
-        "extern { pub static mut c: a; }\n\
+        "extern {\npub static mut c: a;\n}\n\
          #[repr(C)]\n\
          pub struct a {\npub b: c_int,\n}\n\
          "
@@ -411,8 +345,8 @@ fn test_int_init() {
 
 #[test]
 fn test_int_const_expand() {
-    use std::os::raw::{c_int, c_long, c_uint};
     use std::mem::size_of;
+    use std::os::raw::{c_int, c_long, c_uint};
 
     if size_of::<c_int>() < size_of::<c_long>() {
         let num = c_int::max_value() as c_uint + 1;

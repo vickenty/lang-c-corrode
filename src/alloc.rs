@@ -1,9 +1,9 @@
-use std::{fmt, ops};
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::{fmt, ops};
 
 use dynamic_arena;
-use {Variable, Field, Struct, Function};
+use {Field, Function, Struct, Variable};
 
 pub struct Alloc<'a>(dynamic_arena::DynamicArena<'a>);
 

@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
 use ast;
-use {Error, Ref, RefId, Struct, Type};
+use {Error, Ref, RefId, Struct, StructKind, Type};
 
 pub use ast::BinaryOperator;
-pub use ast::UnaryOperator;
 pub use ast::IntegerBase;
+pub use ast::UnaryOperator;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Expression<'a> {
@@ -131,7 +131,7 @@ impl<'a> Integer<'a> {
         };
 
         macro_rules! try_size {
-            ($min:ident, $raw_s:ident, $raw_u:ident, $ty_s:ident, $ty_u:ident) => (
+            ($min:ident, $raw_s:ident, $raw_u:ident, $ty_s:ident, $ty_u:ident) => {
                 if i.suffix.size as usize <= ast::IntegerSize::$min as usize {
                     if !i.suffix.unsigned {
                         if let Ok(_) = raw::$raw_s::from_str_radix(&*i.number, radix) {
@@ -144,7 +144,7 @@ impl<'a> Integer<'a> {
                         }
                     }
                 }
-            )
+            };
         }
 
         try_size!(Int, c_int, c_uint, SInt, UInt);
@@ -278,6 +278,10 @@ impl<'a> StructValue<'a> {
 
         for field in fields {
             values.insert(field.id(), Expression::new_zero(field.ty.ty.clone())?);
+
+            if def.kind == StructKind::Union {
+                break;
+            }
         }
 
         Ok(StructValue {

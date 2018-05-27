@@ -3,22 +3,25 @@ extern crate lang_c;
 #[cfg(test)]
 extern crate syn;
 
-use std::mem;
-use std::ops::RangeFrom;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
+use std::mem;
+use std::ops::RangeFrom;
 
 use lang_c::ast;
 use lang_c::span::Node;
 
-pub mod gen;
+#[macro_use]
+pub mod fmt;
+
 pub mod alloc;
+pub mod gen;
 
 pub mod c;
 pub mod r;
 
-pub use c::expr;
 pub use alloc::*;
+pub use c::expr;
 
 pub type Error = &'static str;
 
@@ -859,29 +862,27 @@ fn test_extern_init() {
     let alloc = &Alloc::new();
     assert_eq!(
         interpret_decl_str(alloc, "extern int a = 1;"),
-        Ok(vec![
-            Item::Variable(
-                alloc.new_variable(Variable {
-                    name: "a".into(),
-                    linkage: Linkage::External,
-                    defined: true.into(),
-                    initial: Some(
-                        expr::Expression::Constant(
-                            expr::Constant::Integer(expr::Integer {
-                                base: expr::IntegerBase::Decimal,
-                                ty: Type::SInt,
-                                number: "1".into(),
-                            }).into(),
-                        ).into(),
+        Ok(vec![Item::Variable(
+            alloc.new_variable(Variable {
+                name: "a".into(),
+                linkage: Linkage::External,
+                defined: true.into(),
+                initial: Some(
+                    expr::Expression::Constant(
+                        expr::Constant::Integer(expr::Integer {
+                            base: expr::IntegerBase::Decimal,
+                            ty: Type::SInt,
+                            number: "1".into(),
+                        }).into(),
                     ).into(),
-                    ty: QualType {
-                        volatile: false,
-                        constant: false,
-                        ty: Type::SInt,
-                    },
-                }),
-            ),
-        ])
+                ).into(),
+                ty: QualType {
+                    volatile: false,
+                    constant: false,
+                    ty: Type::SInt,
+                },
+            }),
+        )])
     );
 }
 
@@ -926,19 +927,17 @@ fn test_typedef_fn() {
     let alloc = &Alloc::new();
     assert_eq!(
         interpret_decl_str(alloc, "typedef int foo(); foo a;"),
-        Ok(vec![
-            Item::Function(alloc.new_function(Function {
-                linkage: Linkage::External,
-                name: "a".into(),
-                inline: false.into(),
-                noreturn: false.into(),
-                ty: Box::new(FunctionTy {
-                    return_type: Type::SInt.into(),
-                    parameters: Vec::new(),
-                    variadic: false,
-                }),
-            })),
-        ])
+        Ok(vec![Item::Function(alloc.new_function(Function {
+            linkage: Linkage::External,
+            name: "a".into(),
+            inline: false.into(),
+            noreturn: false.into(),
+            ty: Box::new(FunctionTy {
+                return_type: Type::SInt.into(),
+                parameters: Vec::new(),
+                variadic: false,
+            }),
+        }))])
     )
 }
 
@@ -1265,28 +1264,24 @@ fn test_function_ptr() {
     let alloc = &Alloc::new();
     assert_eq!(
         interpret_decl_str(alloc, "int (*p)(int, ...);"),
-        Ok(vec![
-            Item::Variable(
-                alloc.new_variable(Variable {
-                    name: "p".into(),
-                    defined: true.into(),
-                    linkage: Linkage::External,
-                    initial: None.into(),
-                    ty: Type::Pointer(
-                        FunctionTy {
-                            variadic: true,
-                            return_type: Type::SInt.into(),
-                            parameters: vec![
-                                Parameter {
-                                    name: None,
-                                    ty: Type::SInt.into(),
-                                },
-                            ],
-                        }.into(),
-                    ).into(),
-                }),
-            ),
-        ])
+        Ok(vec![Item::Variable(
+            alloc.new_variable(Variable {
+                name: "p".into(),
+                defined: true.into(),
+                linkage: Linkage::External,
+                initial: None.into(),
+                ty: Type::Pointer(
+                    FunctionTy {
+                        variadic: true,
+                        return_type: Type::SInt.into(),
+                        parameters: vec![Parameter {
+                            name: None,
+                            ty: Type::SInt.into(),
+                        }],
+                    }.into(),
+                ).into(),
+            }),
+        )])
     );
 }
 
