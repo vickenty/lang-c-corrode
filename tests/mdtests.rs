@@ -9,7 +9,7 @@ fn translate(s: &str) -> String {
     let mut buf = Vec::new();
 
     let parse = lang_c::driver::parse_preprocessed(&Default::default(), s.into()).unwrap();
-    let unit = lang_c_corrode::interpret_translation_unit(alloc, &parse.unit).unwrap();
+    let unit = lang_c_corrode::Unit::from_ast(alloc, &parse.unit).unwrap();
     unit.run_passes().unwrap();
     unit.to_code(&mut lang_c_corrode::fmt::Writer::new(&mut buf));
 

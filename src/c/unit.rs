@@ -10,6 +10,24 @@ pub struct Unit<'a> {
 }
 
 impl<'a> Unit<'a> {
+    pub fn from_ast(alloc: &'a Alloc<'a>, unit: &ast::TranslationUnit) -> Result<Unit<'a>, Error> {
+        let mut env = Env::new();
+        let mut items = Vec::new();
+
+        for ed in &unit.0 {
+            match ed.node {
+                ast::ExternalDeclaration::Declaration(ref decl) => {
+                    items.extend(Item::from_ast(alloc, &mut env, true, decl)?)
+                }
+                _ => unimplemented!(),
+            }
+        }
+
+        env.finalize(&mut items);
+
+        Ok(Unit { items: items })
+    }
+
     pub fn run_passes(&self) -> Result<(), Error> {
         self.add_static_initializers()?;
         self.add_static_casts()?;
@@ -17,7 +35,7 @@ impl<'a> Unit<'a> {
         Ok(())
     }
 
-    pub fn add_static_initializers(&self) -> Result<(), Error> {
+    fn add_static_initializers(&self) -> Result<(), Error> {
         for item in &self.items {
             if let Item::Variable(ref v) = *item {
                 let mut init = v.initial.borrow_mut();
@@ -30,7 +48,7 @@ impl<'a> Unit<'a> {
         Ok(())
     }
 
-    pub fn add_static_casts(&self) -> Result<(), Error> {
+    fn add_static_casts(&self) -> Result<(), Error> {
         for item in &self.items {
             if let Item::Variable(ref v) = *item {
                 if let Some(ref mut expr) = *v.initial.borrow_mut() {
@@ -52,6 +70,149 @@ pub enum Item<'a> {
     Struct(Ref<'a, Struct<'a>>),
 }
 
+impl<'a> Item<'a> {
+    fn from_ast(
+        alloc: &'a Alloc<'a>,
+        env: &mut Env<'a>,
+        file_scope: bool,
+        decl: &Node<ast::Declaration>,
+    ) -> Result<Vec<Item<'a>>, Error> {
+        let mut builder = TypeBuilder::new();
+        let mut storage = None;
+        let mut inline = false;
+        let mut noreturn = false;
+        let mut is_typedef = false;
+
+        for spec in &decl.node.specifiers {
+            let mut new_storage = None;
+            match spec.node {
+                ast::DeclarationSpecifier::StorageClass(ref s) => match s.node {
+                    ast::StorageClassSpecifier::ThreadLocal => {
+                        return Err("_Thread_local is not supported")
+                    }
+                    ast::StorageClassSpecifier::Typedef => is_typedef = true,
+                    ref other => new_storage = Some(other),
+                },
+                ast::DeclarationSpecifier::TypeSpecifier(ref s) => {
+                    builder.visit_specifier(alloc, env, &s.node)?
+                }
+                ast::DeclarationSpecifier::TypeQualifier(ref s) => {
+                    builder.visit_qualifier(&s.node)?
+                }
+                ast::DeclarationSpecifier::Function(ref s) => match s.node {
+                    ast::FunctionSpecifier::Inline => inline = true,
+                    ast::FunctionSpecifier::Noreturn => noreturn = true,
+                },
+                ast::DeclarationSpecifier::Alignment(_) => {
+                    return Err("alignment specifiers not supported")
+                }
+                ast::DeclarationSpecifier::Extension(_) => (), // ignored for now
+            }
+
+            if new_storage.is_some() {
+                if storage.is_none() {
+                    storage = new_storage;
+                } else {
+                    return Err("multiple storage specifiers in a declaration");
+                }
+            }
+        }
+
+        let linkage = match (file_scope, storage) {
+            (true, Some(&ast::StorageClassSpecifier::Static)) => Linkage::Internal,
+            (true, _) => Linkage::External,
+            (false, _) => Linkage::None,
+        };
+
+        let inline = inline && storage.is_none();
+
+        let base_qty = builder.build(env)?;
+
+        let mut res = vec![];
+
+        for init_declarator in &decl.node.declarators {
+            let (qty, name) = derive_declarator(
+                alloc,
+                env,
+                base_qty.clone(),
+                &init_declarator.node.declarator,
+            )?;
+
+            let name = name.expect("declaration with abstract declartor");
+
+            let value = match init_declarator.node.initializer.as_ref() {
+                Some(v) => Some(expr::Expression::from_initializer(&v.node)?),
+                None => None,
+            };
+
+            match (&qty.ty, is_typedef, value) {
+                (_, true, None) => env.add_typedef(&name, qty.clone()),
+                (_, true, Some(_)) => return Err("typedef is initialized"),
+
+                (&Type::Function(ref fun_ty), false, None) => {
+                    let fun = match env.lookup_function(&name)? {
+                        Some(fun) => {
+                            fun.inline.set(fun.inline.get() && inline);
+                            fun.noreturn.set(fun.noreturn.get() || noreturn);
+                            fun
+                        }
+                        None => {
+                            let fun = alloc.new_function(Function {
+                                linkage: linkage,
+                                name: name.clone(),
+                                ty: fun_ty.clone(),
+                                inline: inline.into(),
+                                noreturn: noreturn.into(),
+                            });
+                            env.add_function(&name, fun);
+                            fun
+                        }
+                    };
+
+                    res.push(Item::Function(fun));
+                }
+
+                (&Type::Function(_), false, Some(_)) => return Err("function is initialized"),
+
+                (_, false, value) => {
+                    let is_extern = storage == Some(&ast::StorageClassSpecifier::Extern);
+
+                    let var = match is_extern || file_scope {
+                        true => env.lookup_variable(&name)?,
+                        false => None,
+                    };
+
+                    let var = match var {
+                        Some(var) => {
+                            var.ty.merge(&qty);
+                            var
+                        }
+                        None => {
+                            let var = alloc.new_variable(Variable {
+                                linkage: linkage,
+                                defined: false.into(),
+                                name: name.clone(),
+                                ty: qty.clone(),
+                                initial: None.into(),
+                            });
+                            env.add_variable(&name, var);
+                            var
+                        }
+                    };
+
+                    var.defined
+                        .set(var.defined.get() || !is_extern || value.is_some());
+                    *var.initial.borrow_mut() = value;
+
+                    res.push(Item::Variable(var));
+                }
+            }
+        }
+
+        Ok(res)
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct Variable<'a> {
     pub linkage: Linkage,
@@ -67,13 +228,6 @@ impl<'a> Variable<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum Linkage {
-    None,
-    Internal,
-    External,
-}
-
 #[derive(Debug, PartialEq, Clone)]
 pub struct Function<'a> {
     pub name: String,
@@ -83,164 +237,11 @@ pub struct Function<'a> {
     pub inline: Cell<bool>,
 }
 
-pub fn interpret_declaration<'a>(
-    alloc: &'a Alloc<'a>,
-    env: &mut Env<'a>,
-    file_scope: bool,
-    decl: &Node<ast::Declaration>,
-) -> Result<Vec<Item<'a>>, Error> {
-    let mut builder = TypeBuilder::new();
-    let mut storage = None;
-    let mut inline = false;
-    let mut noreturn = false;
-    let mut is_typedef = false;
-
-    for spec in &decl.node.specifiers {
-        let mut new_storage = None;
-        match spec.node {
-            ast::DeclarationSpecifier::StorageClass(ref s) => match s.node {
-                ast::StorageClassSpecifier::ThreadLocal => {
-                    return Err("_Thread_local is not supported")
-                }
-                ast::StorageClassSpecifier::Typedef => is_typedef = true,
-                ref other => new_storage = Some(other),
-            },
-            ast::DeclarationSpecifier::TypeSpecifier(ref s) => {
-                builder.visit_specifier(alloc, env, &s.node)?
-            }
-            ast::DeclarationSpecifier::TypeQualifier(ref s) => builder.visit_qualifier(&s.node)?,
-            ast::DeclarationSpecifier::Function(ref s) => match s.node {
-                ast::FunctionSpecifier::Inline => inline = true,
-                ast::FunctionSpecifier::Noreturn => noreturn = true,
-            },
-            ast::DeclarationSpecifier::Alignment(_) => {
-                return Err("alignment specifiers not supported")
-            }
-            ast::DeclarationSpecifier::Extension(_) => (), // ignored for now
-        }
-
-        if new_storage.is_some() {
-            if storage.is_none() {
-                storage = new_storage;
-            } else {
-                return Err("multiple storage specifiers in a declaration");
-            }
-        }
-    }
-
-    let linkage = match (file_scope, storage) {
-        (true, Some(&ast::StorageClassSpecifier::Static)) => Linkage::Internal,
-        (true, _) => Linkage::External,
-        (false, _) => Linkage::None,
-    };
-
-    let inline = inline && storage.is_none();
-
-    let base_qty = builder.build(env)?;
-
-    let mut res = vec![];
-
-    for init_declarator in &decl.node.declarators {
-        let (qty, name) = derive_declarator(
-            alloc,
-            env,
-            base_qty.clone(),
-            &init_declarator.node.declarator,
-        )?;
-
-        let name = name.expect("declaration with abstract declartor");
-
-        let value = match init_declarator.node.initializer.as_ref() {
-            Some(v) => Some(expr::Expression::from_initializer(&v.node)?),
-            None => None,
-        };
-
-        match (&qty.ty, is_typedef, value) {
-            (_, true, None) => env.add_typedef(&name, qty.clone()),
-            (_, true, Some(_)) => return Err("typedef is initialized"),
-
-            (&Type::Function(ref fun_ty), false, None) => {
-                let fun = match env.lookup_function(&name)? {
-                    Some(fun) => {
-                        fun.inline.set(fun.inline.get() && inline);
-                        fun.noreturn.set(fun.noreturn.get() || noreturn);
-                        fun
-                    }
-                    None => {
-                        let fun = alloc.new_function(Function {
-                            linkage: linkage,
-                            name: name.clone(),
-                            ty: fun_ty.clone(),
-                            inline: inline.into(),
-                            noreturn: noreturn.into(),
-                        });
-                        env.add_function(&name, fun);
-                        fun
-                    }
-                };
-
-                res.push(Item::Function(fun));
-            }
-
-            (&Type::Function(_), false, Some(_)) => return Err("function is initialized"),
-
-            (_, false, value) => {
-                let is_extern = storage == Some(&ast::StorageClassSpecifier::Extern);
-
-                let var = match is_extern || file_scope {
-                    true => env.lookup_variable(&name)?,
-                    false => None,
-                };
-
-                let var = match var {
-                    Some(var) => {
-                        var.ty.merge(&qty);
-                        var
-                    }
-                    None => {
-                        let var = alloc.new_variable(Variable {
-                            linkage: linkage,
-                            defined: false.into(),
-                            name: name.clone(),
-                            ty: qty.clone(),
-                            initial: None.into(),
-                        });
-                        env.add_variable(&name, var);
-                        var
-                    }
-                };
-
-                var.defined
-                    .set(var.defined.get() || !is_extern || value.is_some());
-                *var.initial.borrow_mut() = value;
-
-                res.push(Item::Variable(var));
-            }
-        }
-    }
-
-    Ok(res)
-}
-
-pub fn interpret_translation_unit<'a>(
-    alloc: &'a Alloc<'a>,
-    unit: &ast::TranslationUnit,
-) -> Result<Unit<'a>, Error> {
-    let mut env = Env::new();
-    let mut items = Vec::new();
-
-    for ed in &unit.0 {
-        match ed.node {
-            ast::ExternalDeclaration::Declaration(ref decl) => {
-                items.extend(interpret_declaration(alloc, &mut env, true, decl)?)
-            }
-            _ => unimplemented!(),
-        }
-    }
-
-    env.finalize(&mut items);
-
-    Ok(Unit { items: items })
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum Linkage {
+    None,
+    Internal,
+    External,
 }
 
 #[cfg(test)]
@@ -251,7 +252,7 @@ fn interpret_decl_str<'a>(alloc: &'a Alloc<'a>, decl_str: &str) -> Result<Vec<It
     let conf = &Default::default();
     let parse =
         lang_c::driver::parse_preprocessed(conf, decl_str.to_owned()).expect("syntax error");
-    interpret_translation_unit(alloc, &parse.unit).map(|u| u.items)
+    Unit::from_ast(alloc, &parse.unit).map(|u| u.items)
 }
 
 #[test]
