@@ -31,7 +31,7 @@ impl<W: io::Write> Writer<W> {
         if self.indent_next {
             self.indent_next = false;
             for _ in 0..self.offset {
-                write!(self.writer, "").unwrap();
+                write!(self.writer, "    ").unwrap();
             }
         }
     }
@@ -143,5 +143,5 @@ fn test_codegen() {
     }
 
     let val = String::from_utf8(fmt.into_inner().into_inner()).unwrap();
-    assert_eq!(val, "fn main() {\nprintln!(\"Hello world!\");\n}\n");
+    assert_eq!(val, "fn main() {\n    println!(\"Hello world!\");\n}\n");
 }

@@ -1169,7 +1169,8 @@ fn derive_func_type<'a>(
     ret_ty: QualType<'a>,
     fd: &Node<ast::FunctionDeclarator>,
 ) -> Result<QualType<'a>, Error> {
-    let params = fd.node
+    let params = fd
+        .node
         .parameters
         .iter()
         .map(|pd| interpret_parameter(alloc, env, pd))
@@ -1241,7 +1242,8 @@ fn derive_func_type_kr<'a>(
         ty: Type::SInt,
     };
 
-    let params = fs.iter()
+    let params = fs
+        .iter()
         .map(|id| Parameter {
             name: Some(id.node.name.clone()),
             ty: default_ty.clone(),

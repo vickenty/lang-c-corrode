@@ -1,0 +1,5 @@
+[package]
+name = "mdtestc"
+version = "0.1.0"
+authors = ["Vickenty Fesunov <kent@setattr.net>"]
+publish = false
