@@ -4,6 +4,9 @@ version = "0.1.0"
 authors = ["Vickenty Fesunov <kent@setattr.net>"]
 license = "MIT/Apache-2.0"
 
+[features]
+old_trans = []
+
 [dependencies]
 lang-c = { git = "https://github.com/vickenty/lang-c" }
 dynamic-arena = "0.1"

@@ -1,5 +1,9 @@
 #[test]
-fn static_var() {
+fn static_int() {
+    check!("static int x;\n", "#[no_mangle]\npub static mut x: c_int = 0;\n");
+}
+#[test]
+fn static_pointer() {
     check!("typedef int *ip;\nstatic ip x;\n", "#[no_mangle]\npub static mut x: *mut c_int = (0) as *mut c_int;\n");
 }
 #[test]

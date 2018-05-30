@@ -1,4 +1,15 @@
-# static_var
+# static_int
+
+```c
+static int x;
+```
+
+```rust
+#[no_mangle]
+pub static mut x: c_int = 0;
+```
+
+# static_pointer
 
 ```c
 typedef int *ip;
