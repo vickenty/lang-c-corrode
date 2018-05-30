@@ -3,8 +3,8 @@ pub enum Type {
     Integer(Integer),
 }
 
-#[derive(Debug, PartialEq, Clone)]
 /// C Integer types provided by `std::os::raw` module.
+#[derive(Debug, PartialEq, Clone)]
 pub enum Integer {
     Char,
     SChar,
