@@ -135,7 +135,7 @@ impl Type {
             CType::Float => Type::Float("c_float"),
             CType::Double => Type::Float("c_double"),
             CType::Bool => Type::Bool,
-            CType::Pointer(ref ptr) => Type::Pointer(Box::new(Type::from_c(&ptr.ty))),
+            CType::Pointer(ref qty) => Type::Pointer(Box::new(Type::from_c(&qty.ty))),
             _ => unimplemented!(),
         }
     }
@@ -154,7 +154,7 @@ impl<'a> fmt::ToCode for TypeName<'a> {
             Type::Int(name) => name.to_code(fmt),
             Type::Float(name) => name.to_code(fmt),
             Type::Bool => "c_bool".to_code(fmt),
-            Type::Pointer(ref ptr) => toks!(fmt, "*mut ", ptr.name()),
+            Type::Pointer(ref ty) => toks!(fmt, "*mut ", ty.name()),
         }
     }
 }
