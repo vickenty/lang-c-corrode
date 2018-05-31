@@ -1,3 +1,4 @@
+#![cfg_attr(rustfmt, rustfmt_skip)]
 #[test]
 fn static_int() {
     check!("static int x;\n", "#[no_mangle]\npub static mut x: c_int = 0;\n");

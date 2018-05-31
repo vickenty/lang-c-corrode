@@ -90,6 +90,7 @@ fn parse_tests_md(path: &OsStr) -> Result<Vec<TestCase>, Box<Error>> {
 
 fn write_test_code(tests: &[TestCase], output_path: &OsStr) -> Result<(), Box<Error>> {
     let output = &mut BufWriter::new(File::create(output_path)?);
+    writeln!(output, "#![cfg_attr(rustfmt, rustfmt_skip)]")?;
 
     for test in tests {
         writeln!(output, "#[test]")?;
