@@ -29,6 +29,7 @@ extern char x;
 
 ```rust
 extern {
+    #[no_mangle]
     pub static mut x: c_char;
 }
 ```

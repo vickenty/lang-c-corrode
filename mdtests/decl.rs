@@ -8,7 +8,7 @@ fn static_pointer() {
 }
 #[test]
 fn extern_var() {
-    check!("extern char x;\n", "extern {\n    pub static mut x: c_char;\n}\n");
+    check!("extern char x;\n", "extern {\n    #[no_mangle]\n    pub static mut x: c_char;\n}\n");
 }
 #[test]
 fn struct_simple() {

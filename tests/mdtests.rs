@@ -10,7 +10,7 @@ fn translate(s: &str) -> String {
 
     let parse = lang_c::driver::parse_preprocessed(&Default::default(), s.into()).unwrap();
     let unit = lang_c_corrode::Unit::from_ast(alloc, &parse.unit).unwrap();
-    
+
     #[cfg(feature = "old_trans")]
     {
         unit.run_passes().unwrap();
@@ -22,7 +22,11 @@ fn translate(s: &str) -> String {
         ir2.to_code(&mut lang_c_corrode::fmt::Writer::new(&mut buf));
     }
     let s = String::from_utf8(buf).unwrap();
-    syn::parse_str::<syn::File>(&s).unwrap();
+    if let res @ Err(_) = syn::parse_str::<syn::File>(&s) {
+        eprintln!("```rust\n{}\n```", s);
+        res.unwrap();
+    }
+
     s
 }
 
