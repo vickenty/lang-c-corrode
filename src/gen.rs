@@ -1,5 +1,4 @@
-use super::expr;
-use super::{Function, FunctionTy, Item, Struct, StructKind, Type, Unit, Variable};
+use c::{expr, Function, FunctionTy, Item, Struct, StructKind, Type, Unit, Variable};
 
 use fmt::{Formatter, ToCode};
 

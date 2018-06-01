@@ -16,9 +16,5 @@ pub mod c;
 pub mod r;
 
 pub use alloc::*;
-pub use c::env::*;
-pub use c::expr;
-pub use c::ty::*;
-pub use c::unit::*;
 
 pub type Error = &'static str;

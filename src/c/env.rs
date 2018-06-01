@@ -2,7 +2,8 @@ use std::collections::HashMap;
 use std::mem;
 use std::ops::RangeFrom;
 
-use {Error, Function, Item, QualType, Ref, Struct, Variable};
+use c::{Function, Item, QualType, Struct, Variable};
+use {Error, Ref};
 
 pub struct Scope<'a> {
     names: HashMap<String, NameDef<'a>>,

@@ -1,8 +1,6 @@
+use c::{derive_declarator, expr, Env, FunctionTy, QualType, Struct, Type, TypeBuilder};
 use std::cell::{Cell, RefCell};
-use {
-    ast, derive_declarator, expr, Alloc, Env, Error, FunctionTy, Node, QualType, Ref, Struct, Type,
-    TypeBuilder,
-};
+use {ast, Alloc, Error, Node, Ref};
 
 #[derive(Debug)]
 pub struct Unit<'a> {
@@ -245,7 +243,7 @@ pub enum Linkage {
 }
 
 #[cfg(test)]
-use {lang_c, Parameter};
+use {c::Parameter, lang_c};
 
 #[cfg(test)]
 fn interpret_decl_str<'a>(alloc: &'a Alloc<'a>, decl_str: &str) -> Result<Vec<Item<'a>>, Error> {

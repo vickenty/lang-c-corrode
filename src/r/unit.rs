@@ -1,15 +1,11 @@
-use c::ty::Type as CType;
-use c::unit::Item as CItem;
-use c::unit::Unit as CUnit;
-use c::unit::Variable as CVariable;
-use fmt;
+use {c, fmt};
 
 pub struct Unit {
     items: Vec<Item>,
 }
 
 impl Unit {
-    pub fn from_c(unit: &CUnit) -> Unit {
+    pub fn from_c(unit: &c::Unit) -> Unit {
         Unit {
             items: unit.items.iter().map(|i| Item::from_c(i)).collect(),
         }
@@ -30,9 +26,9 @@ pub enum Item {
 }
 
 impl Item {
-    pub fn from_c(item: &CItem) -> Item {
+    pub fn from_c(item: &c::Item) -> Item {
         match item {
-            CItem::Variable(var) => {
+            c::Item::Variable(var) => {
                 let def = Static::from_c(&var, var.is_defined());
                 if var.is_defined() {
                     Item::Static(def)
@@ -62,7 +58,7 @@ pub struct Static {
 }
 
 impl Static {
-    pub fn from_c(var: &CVariable, initialize: bool) -> Static {
+    pub fn from_c(var: &c::Variable, initialize: bool) -> Static {
         let ty = Type::from_c(&var.ty.ty);
         let initial = match *var.initial.borrow() {
             Some(_) => unimplemented!(),
@@ -118,24 +114,24 @@ pub enum Type {
 }
 
 impl Type {
-    pub fn from_c(ty: &CType) -> Type {
+    pub fn from_c(ty: &c::Type) -> Type {
         match *ty {
-            CType::Void => Type::Void,
-            CType::Char => Type::Int("c_char"),
-            CType::SChar => Type::Int("c_schar"),
-            CType::UChar => Type::Int("c_uchar"),
-            CType::SInt => Type::Int("c_int"),
-            CType::UInt => Type::Int("c_uint"),
-            CType::SShort => Type::Int("c_short"),
-            CType::UShort => Type::Int("c_ushort"),
-            CType::SLong => Type::Int("c_long"),
-            CType::ULong => Type::Int("c_ulong"),
-            CType::SLongLong => Type::Int("c_longlong"),
-            CType::ULongLong => Type::Int("c_ulonglong"),
-            CType::Float => Type::Float("c_float"),
-            CType::Double => Type::Float("c_double"),
-            CType::Bool => Type::Bool,
-            CType::Pointer(ref qty) => Type::Pointer(Box::new(Type::from_c(&qty.ty))),
+            c::Type::Void => Type::Void,
+            c::Type::Char => Type::Int("c_char"),
+            c::Type::SChar => Type::Int("c_schar"),
+            c::Type::UChar => Type::Int("c_uchar"),
+            c::Type::SInt => Type::Int("c_int"),
+            c::Type::UInt => Type::Int("c_uint"),
+            c::Type::SShort => Type::Int("c_short"),
+            c::Type::UShort => Type::Int("c_ushort"),
+            c::Type::SLong => Type::Int("c_long"),
+            c::Type::ULong => Type::Int("c_ulong"),
+            c::Type::SLongLong => Type::Int("c_longlong"),
+            c::Type::ULongLong => Type::Int("c_ulonglong"),
+            c::Type::Float => Type::Float("c_float"),
+            c::Type::Double => Type::Float("c_double"),
+            c::Type::Bool => Type::Bool,
+            c::Type::Pointer(ref qty) => Type::Pointer(Box::new(Type::from_c(&qty.ty))),
             _ => unimplemented!(),
         }
     }

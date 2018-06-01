@@ -1,7 +1,8 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
 
-use {ast, Alloc, Env, Error, Node, Ref};
+use c::Env;
+use {ast, Alloc, Error, Node, Ref};
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct QualType<'a> {

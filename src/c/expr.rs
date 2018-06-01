@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use ast;
-use {Error, Ref, RefId, Struct, StructKind, Type};
+use c::{Struct, StructKind, Type};
+use {Error, Ref, RefId};
 
 pub use ast::BinaryOperator;
 pub use ast::IntegerBase;
