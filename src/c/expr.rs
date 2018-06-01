@@ -278,7 +278,7 @@ impl<'a> StructValue<'a> {
         };
 
         for field in fields {
-            values.insert(field.id(), Expression::new_zero(field.ty.ty.clone())?);
+            values.insert(Ref::id(field), Expression::new_zero(field.ty.ty.clone())?);
 
             if def.kind == StructKind::Union {
                 break;

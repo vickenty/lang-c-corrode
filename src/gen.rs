@@ -1,6 +1,7 @@
 use c::{expr, Function, FunctionTy, Item, Struct, StructKind, Type, Unit, Variable};
 
 use fmt::{Formatter, ToCode};
+use Ref;
 
 impl<'a> ToCode for Unit<'a> {
     fn to_code(&self, fmt: &mut Formatter) {
@@ -138,7 +139,7 @@ impl<'a> ToCode for expr::StructValue<'a> {
         block!(fmt, {
             if let Some(ref fields) = *self.def.fields.borrow() {
                 for field in fields {
-                    if let Some(ref val) = self.values.get(&field.id()) {
+                    if let Some(ref val) = self.values.get(&Ref::id(&field)) {
                         tokln!(fmt, field.rust_name, ": ", val, ",");
                     }
                 }

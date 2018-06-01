@@ -31,12 +31,12 @@ pub struct Ref<'a, T: 'a>(pub &'a T);
 pub type RefId = usize;
 
 impl<'a, T: PartialEq> Ref<'a, T> {
-    pub fn same_as(&self, other: &Self) -> bool {
-        self.0 as *const _ == other.0 as *const _
+    pub fn eq(a: &Self, b: &Self) -> bool {
+        a.0 as *const _ == b.0 as *const _
     }
 
-    pub fn id(&self) -> RefId {
-        self.0 as *const _ as usize
+    pub fn id(this: &Self) -> RefId {
+        this.0 as *const _ as usize
     }
 }
 

@@ -458,7 +458,7 @@ fn test_struct() {
     let next = fields.get(0).unwrap();
     match next.ty.ty {
         Type::Pointer(ref qty) => match qty.ty {
-            Type::Struct(next_sty) => assert_eq!(next_sty.same_as(&head_sty), true),
+            Type::Struct(next_sty) => assert_eq!(Ref::eq(&next_sty, &head_sty), true),
             _ => panic!("next has wrong type: {:#?}", next.ty),
         },
         _ => panic!("next has wrong type: {:#?}", next.ty),
