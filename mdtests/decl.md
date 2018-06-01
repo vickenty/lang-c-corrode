@@ -53,7 +53,15 @@ pub struct a {
 # struct_anon
 
 ```c
-struct { union { int a; float b; }; struct { int c, d; }; } v;
+struct {
+    union {
+        int a;
+        float b;
+    };
+    struct {
+        int c, d;
+    };
+} v;
 ```
 
 ```rust
