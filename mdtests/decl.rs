@@ -17,7 +17,7 @@ fn struct_simple() {
 }
 #[test]
 fn struct_anon() {
-    check!("struct { union { int a; float b; }; struct { int c, d; }; } v;\n", "#[no_mangle]\npub static mut v: Generated_0 = Generated_0 {\n    anon_0: Generated_1 {\n        a: (0) as c_int,\n    },\n    anon_1: Generated_2 {\n        c: (0) as c_int,\n        d: (0) as c_int,\n    },\n};\n#[repr(C)]\npub struct Generated_0 {\n    pub anon_0: Generated_1,\n    pub anon_1: Generated_2,\n}\n#[repr(C)]\npub union Generated_1 {\n    pub a: c_int,\n    pub b: c_float,\n}\n#[repr(C)]\npub struct Generated_2 {\n    pub c: c_int,\n    pub d: c_int,\n}\n");
+    check!("struct {\n    union {\n        int a;\n        float b;\n    };\n    struct {\n        int c, d;\n    };\n} v;\n", "#[no_mangle]\npub static mut v: Generated_0 = Generated_0 {\n    anon_0: Generated_1 {\n        a: (0) as c_int,\n    },\n    anon_1: Generated_2 {\n        c: (0) as c_int,\n        d: (0) as c_int,\n    },\n};\n#[repr(C)]\npub struct Generated_0 {\n    pub anon_0: Generated_1,\n    pub anon_1: Generated_2,\n}\n#[repr(C)]\npub union Generated_1 {\n    pub a: c_int,\n    pub b: c_float,\n}\n#[repr(C)]\npub struct Generated_2 {\n    pub c: c_int,\n    pub d: c_int,\n}\n");
 }
 #[test]
 fn struct_anon_clobber() {
