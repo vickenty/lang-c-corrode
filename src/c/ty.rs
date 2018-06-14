@@ -39,6 +39,32 @@ pub enum Type<'a> {
     Function(Box<FunctionTy<'a>>),
 }
 
+impl<'a> Type<'a> {
+    pub fn eq(a: &Self, b: &Self) -> bool {
+        match (a, b) {
+            (&Type::Void, &Type::Void) => true,
+            (&Type::Char, &Type::Char) => true,
+            (&Type::SChar, &Type::SChar) => true,
+            (&Type::UChar, &Type::UChar) => true,
+            (&Type::SInt, &Type::SInt) => true,
+            (&Type::UInt, &Type::UInt) => true,
+            (&Type::SShort, &Type::SShort) => true,
+            (&Type::UShort, &Type::UShort) => true,
+            (&Type::SLong, &Type::SLong) => true,
+            (&Type::ULong, &Type::ULong) => true,
+            (&Type::SLongLong, &Type::SLongLong) => true,
+            (&Type::ULongLong, &Type::ULongLong) => true,
+            (&Type::Float, &Type::Float) => true,
+            (&Type::Double, &Type::Double) => true,
+            (&Type::Bool, &Type::Bool) => true,
+            (&Type::Pointer(ref a), &Type::Pointer(ref b)) => a == b,
+            (&Type::Struct(ref a), &Type::Struct(ref b)) => Ref::eq(a, b),
+            (&Type::Function(ref a), &Type::Function(ref b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct FunctionTy<'a> {
     pub return_type: QualType<'a>,

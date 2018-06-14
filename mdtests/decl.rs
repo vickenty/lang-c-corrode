@@ -1,7 +1,7 @@
 #![cfg_attr(rustfmt, rustfmt_skip)]
 #[test]
 fn static_int() {
-    check!("static int x;\n", "#[no_mangle]\npub static mut x: c_int = 0;\n");
+    check!("static int x;\n", "#[no_mangle]\npub static mut x: c_int = (0) as c_int;\n");
 }
 #[test]
 fn static_pointer() {

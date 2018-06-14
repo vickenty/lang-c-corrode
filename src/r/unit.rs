@@ -1,3 +1,4 @@
+use c::IntegerBase;
 use {c, fmt};
 
 pub struct Unit {
@@ -60,11 +61,15 @@ pub struct Static {
 impl Static {
     pub fn from_c(var: &c::Variable, initialize: bool) -> Static {
         let ty = Type::from_c(&var.ty.ty);
+
         let initial = match *var.initial.borrow() {
-            Some(_) => unimplemented!(),
+            Some(ref val) => Some(Expr::from_c(&val)),
             None if initialize => Some(Expr::new_zero(&ty)),
             None => None,
         };
+
+        // C11 6.5.16.1 §2
+        let initial = initial.map(|e| e.cast(&ty));
 
         Static {
             name: var.name.clone(),
@@ -104,8 +109,9 @@ impl fmt::ToCode for Extern {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Type {
+    Auto,
     Void,
     Int(&'static str),
     Float(&'static str),
@@ -146,6 +152,7 @@ pub struct TypeName<'a>(&'a Type);
 impl<'a> fmt::ToCode for TypeName<'a> {
     fn to_code(&self, fmt: &mut fmt::Formatter) {
         match *self.0 {
+            Type::Auto => "_".to_code(fmt),
             Type::Void => "c_void".to_code(fmt),
             Type::Int(name) => name.to_code(fmt),
             Type::Float(name) => name.to_code(fmt),
@@ -162,13 +169,43 @@ pub enum Expr {
 }
 
 impl Expr {
-    pub fn new_zero(ty: &Type) -> Expr {
+    fn new_zero(ty: &Type) -> Expr {
         match *ty {
-            Type::Int(_) => Expr::Integer(Integer::new_zero()),
-            Type::Pointer(_) => {
-                Expr::Cast(Box::new(Expr::Integer(Integer::new_zero())), ty.clone())
-            }
+            Type::Int(_) | Type::Pointer(_) => Expr::Integer(Integer::new_zero()).cast(ty),
             _ => unimplemented!(),
+        }
+    }
+
+    fn from_c<'a>(val: &c::Expression<'a>) -> Expr {
+        match *val {
+            c::Expression::Constant(ref c) => Expr::from_const(&c),
+            _ => unimplemented!(),
+        }
+    }
+
+    fn from_const(c: &c::Constant) -> Expr {
+        let expr = match c {
+            &c::Constant::Integer(ref i) => Expr::Integer(Integer::from_c(i)),
+            _ => unimplemented!(),
+        };
+
+        // Assumes that `literal as ty` has the same effect as explicitly
+        // typing literal with the suffix that corresponds to ty.
+        Expr::Cast(Box::new(expr), Type::from_c(&c.ty()))
+    }
+
+    fn cast(self, ty: &Type) -> Expr {
+        if self.ty() != *ty {
+            Expr::Cast(Box::new(self), ty.clone())
+        } else {
+            self
+        }
+    }
+
+    fn ty(&self) -> Type {
+        match *self {
+            Expr::Integer(_) => Type::Auto,
+            Expr::Cast(_, ref ty) => ty.clone(),
         }
     }
 }
@@ -184,17 +221,33 @@ impl fmt::ToCode for Expr {
 
 #[derive(Debug, Clone)]
 pub struct Integer {
+    base: IntegerBase,
     value: Box<str>,
 }
 
 impl Integer {
     fn new_zero() -> Integer {
-        Integer { value: "0".into() }
+        Integer {
+            base: IntegerBase::Decimal,
+            value: "0".into(),
+        }
+    }
+
+    fn from_c(i: &c::Integer) -> Integer {
+        Integer {
+            base: i.base.clone(),
+            value: i.number.clone(),
+        }
     }
 }
 
 impl fmt::ToCode for Integer {
     fn to_code(&self, fmt: &mut fmt::Formatter) {
+        match self.base {
+            IntegerBase::Decimal => (),
+            IntegerBase::Hexademical => "0x".to_code(fmt),
+            IntegerBase::Octal => "Oo".to_code(fmt),
+        }
         toks!(fmt, self.value);
     }
 }

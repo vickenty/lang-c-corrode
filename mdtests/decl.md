@@ -6,7 +6,7 @@ static int x;
 
 ```rust
 #[no_mangle]
-pub static mut x: c_int = 0;
+pub static mut x: c_int = (0) as c_int;
 ```
 
 # static_pointer

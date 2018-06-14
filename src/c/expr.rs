@@ -98,7 +98,7 @@ impl<'a> Constant<'a> {
         })
     }
 
-    fn ty(&self) -> Type<'a> {
+    pub fn ty(&self) -> Type<'a> {
         match *self {
             Constant::Integer(ref i) => i.ty.clone(),
             Constant::Float(ref f) => f.ty.clone(),
