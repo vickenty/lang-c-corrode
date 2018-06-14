@@ -56,6 +56,10 @@ fn expr_pointer_zero() {
     check!("int *p = 0;\n", "#[no_mangle]\npub static mut p: *mut c_int = ((0) as c_int) as *mut c_int;\n");
 }
 #[test]
+fn expr_char() {
+    check!("char c = 1;\n", "#[no_mangle]\npub static mut c: c_char = ((1) as c_int) as c_char;\n");
+}
+#[test]
 fn integer_literal_expand() {
-    check!("char x = 1000;\n", "#[no_mangle]\npub static mut x: c_char = ((1000) as c_int) as c_char;\n");
+    check!("int i = 0x100000000;\n", "#[no_mangle]\npub static mut i: c_int = ((0x100000000) as c_long) as c_int;\n");
 }

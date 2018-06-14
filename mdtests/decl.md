@@ -218,15 +218,26 @@ int *p = 0;
 pub static mut p: *mut c_int = ((0) as c_int) as *mut c_int;
 ```
 
-# integer_literal_expand
-
-This test assumes that `1000` is too large to fit a `char`.
+# expr_char
 
 ```c
-char x = 1000;
+char c = 1;
 ```
 
 ```rust
 #[no_mangle]
-pub static mut x: c_char = ((1000) as c_int) as c_char;
+pub static mut c: c_char = ((1) as c_int) as c_char;
+```
+
+# integer_literal_expand
+
+Assumes that `0x100000000` is too large for `int`.
+
+```c
+int i = 0x100000000;
+```
+
+```rust
+#[no_mangle]
+pub static mut i: c_int = ((0x100000000) as c_long) as c_int;
 ```
