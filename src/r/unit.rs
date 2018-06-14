@@ -165,6 +165,7 @@ impl<'a> fmt::ToCode for TypeName<'a> {
 #[derive(Debug, Clone)]
 pub enum Expr {
     Integer(Integer),
+    Float(Float),
     Cast(Box<Expr>, Type),
 }
 
@@ -172,6 +173,7 @@ impl Expr {
     fn new_zero(ty: &Type) -> Expr {
         match *ty {
             Type::Int(_) | Type::Pointer(_) => Expr::Integer(Integer::new_zero()).cast(ty),
+            Type::Float(_) => Expr::Float(Float::new_zero()).cast(ty),
             _ => unimplemented!(),
         }
     }
@@ -184,9 +186,9 @@ impl Expr {
     }
 
     fn from_const(c: &c::Constant) -> Expr {
-        let expr = match c {
-            &c::Constant::Integer(ref i) => Expr::Integer(Integer::from_c(i)),
-            _ => unimplemented!(),
+        let expr = match *c {
+            c::Constant::Integer(ref i) => Expr::Integer(Integer::from_c(i)),
+            c::Constant::Float(ref f) => Expr::Float(Float::from_c(f)),
         };
 
         // Assumes that `literal as ty` has the same effect as explicitly
@@ -205,6 +207,7 @@ impl Expr {
     fn ty(&self) -> Type {
         match *self {
             Expr::Integer(_) => Type::Auto,
+            Expr::Float(_) => Type::Auto,
             Expr::Cast(_, ref ty) => ty.clone(),
         }
     }
@@ -214,6 +217,7 @@ impl fmt::ToCode for Expr {
     fn to_code(&self, fmt: &mut fmt::Formatter) {
         match *self {
             Expr::Integer(ref i) => i.to_code(fmt),
+            Expr::Float(ref f) => f.to_code(fmt),
             Expr::Cast(ref expr, ref ty) => toks!(fmt, "(", expr, ") as ", ty.name()),
         }
     }
@@ -248,6 +252,31 @@ impl fmt::ToCode for Integer {
             IntegerBase::Hexademical => "0x".to_code(fmt),
             IntegerBase::Octal => "Oo".to_code(fmt),
         }
-        toks!(fmt, self.value);
+        self.value.to_code(fmt);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Float {
+    number: Box<str>,
+}
+
+impl Float {
+    fn new_zero() -> Float {
+        Float {
+            number: "0".into(),
+        }
+    }
+
+    fn from_c(f: &c::Float) -> Float {
+        Float {
+            number: f.number.clone(),
+        }
+    }
+}
+
+impl fmt::ToCode for Float {
+    fn to_code(&self, fmt: &mut fmt::Formatter) {
+        self.number.to_code(fmt);
     }
 }
