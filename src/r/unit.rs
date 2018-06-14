@@ -167,6 +167,8 @@ pub enum Expr {
     Integer(Integer),
     Float(Float),
     Cast(Box<Expr>, Type),
+    Unary(&'static str, Box<Expr>),
+    Infix(&'static str, Box<Expr>, Box<Expr>),
 }
 
 impl Expr {
@@ -181,6 +183,8 @@ impl Expr {
     fn from_c<'a>(val: &c::Expression<'a>) -> Expr {
         match *val {
             c::Expression::Constant(ref c) => Expr::from_const(&c),
+            c::Expression::Binary(ref op) => Expr::from_binop(op),
+            c::Expression::Unary(ref op) => Expr::from_unop(op),
             _ => unimplemented!(),
         }
     }
@@ -196,6 +200,35 @@ impl Expr {
         Expr::Cast(Box::new(expr), Type::from_c(&c.ty()))
     }
 
+    fn from_unop(o: &c::Unary) -> Expr {
+        let arg = Box::new(Expr::from_c(&o.operand));
+        match o.operator {
+            c::UnaryOperator::Minus => Expr::Unary("-", arg),
+            _ => unimplemented!(),
+        }
+    }
+
+    fn from_binop(o: &c::Binary) -> Expr {
+        let lhs = Box::new(Expr::from_c(&o.lhs));
+        let rhs = Box::new(Expr::from_c(&o.rhs));
+
+        let op = match o.operator {
+            c::BinaryOperator::Multiply => "*",
+            c::BinaryOperator::Divide => "/",
+            c::BinaryOperator::Modulo => "%",
+            c::BinaryOperator::Plus => "+",
+            c::BinaryOperator::Minus => "-",
+            c::BinaryOperator::ShiftLeft => "<<",
+            c::BinaryOperator::ShiftRight => ">>",
+            c::BinaryOperator::BitwiseAnd => "&",
+            c::BinaryOperator::BitwiseXor => "^",
+            c::BinaryOperator::BitwiseOr => "|",
+            _ => unimplemented!(),
+        };
+
+        Expr::Infix(op, lhs, rhs)
+    }
+
     fn cast(self, ty: &Type) -> Expr {
         if self.ty() != *ty {
             Expr::Cast(Box::new(self), ty.clone())
@@ -209,6 +242,8 @@ impl Expr {
             Expr::Integer(_) => Type::Auto,
             Expr::Float(_) => Type::Auto,
             Expr::Cast(_, ref ty) => ty.clone(),
+            Expr::Unary(_, ref arg) => arg.ty(),
+            Expr::Infix(_, ref lhs, _) => lhs.ty(),
         }
     }
 }
@@ -219,6 +254,8 @@ impl fmt::ToCode for Expr {
             Expr::Integer(ref i) => i.to_code(fmt),
             Expr::Float(ref f) => f.to_code(fmt),
             Expr::Cast(ref expr, ref ty) => toks!(fmt, "(", expr, ") as ", ty.name()),
+            Expr::Unary(op, ref arg) => toks!(fmt, op, "(", arg, ")"),
+            Expr::Infix(op, ref lhs, ref rhs) => toks!(fmt, "(", lhs, ") ", op, " (", rhs, ")"),
         }
     }
 }
