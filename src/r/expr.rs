@@ -1,6 +1,6 @@
+use super::Type;
 use c;
 use c::IntegerBase;
-use super::Type;
 use fmt;
 
 #[derive(Debug, Clone)]
@@ -96,7 +96,9 @@ impl fmt::ToCode for Expression {
             Expression::Float(ref f) => f.to_code(fmt),
             Expression::Cast(ref expr, ref ty) => toks!(fmt, "(", expr, ") as ", ty.name()),
             Expression::Unary(op, ref arg) => toks!(fmt, op, "(", arg, ")"),
-            Expression::Infix(op, ref lhs, ref rhs) => toks!(fmt, "(", lhs, ") ", op, " (", rhs, ")"),
+            Expression::Infix(op, ref lhs, ref rhs) => {
+                toks!(fmt, "(", lhs, ") ", op, " (", rhs, ")")
+            }
         }
     }
 }
@@ -141,9 +143,7 @@ pub struct Float {
 
 impl Float {
     fn new_zero() -> Float {
-        Float {
-            number: "0".into(),
-        }
+        Float { number: "0".into() }
     }
 
     fn from_c(f: &c::Float) -> Float {

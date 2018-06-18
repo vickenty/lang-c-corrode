@@ -1,7 +1,7 @@
 //! Intermediate representation of the Rust language
 
-mod unit;
 mod expr;
+mod unit;
 
-pub use self::unit::*;
 pub use self::expr::*;
+pub use self::unit::*;
