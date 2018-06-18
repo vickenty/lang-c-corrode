@@ -1,4 +1,4 @@
-use super::Expr;
+use super::Expression;
 use {c, fmt};
 
 pub struct Unit {
@@ -55,7 +55,7 @@ impl fmt::ToCode for Item {
 pub struct Static {
     name: String,
     ty: Type,
-    initial: Option<Expr>,
+    initial: Option<Expression>,
 }
 
 impl Static {
@@ -63,8 +63,8 @@ impl Static {
         let ty = Type::from_c(&var.ty.ty);
 
         let initial = match *var.initial.borrow() {
-            Some(ref val) => Some(Expr::from_c(&val)),
-            None if initialize => Some(Expr::new_zero(&ty)),
+            Some(ref val) => Some(Expression::from_c(&val)),
+            None if initialize => Some(Expression::new_zero(&ty)),
             None => None,
         };
 

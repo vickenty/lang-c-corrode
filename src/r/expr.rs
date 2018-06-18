@@ -4,54 +4,54 @@ use super::Type;
 use fmt;
 
 #[derive(Debug, Clone)]
-pub enum Expr {
+pub enum Expression {
     Integer(Integer),
     Float(Float),
-    Cast(Box<Expr>, Type),
-    Unary(&'static str, Box<Expr>),
-    Infix(&'static str, Box<Expr>, Box<Expr>),
+    Cast(Box<Expression>, Type),
+    Unary(&'static str, Box<Expression>),
+    Infix(&'static str, Box<Expression>, Box<Expression>),
 }
 
-impl Expr {
-    pub fn new_zero(ty: &Type) -> Expr {
+impl Expression {
+    pub fn new_zero(ty: &Type) -> Expression {
         match *ty {
-            Type::Int(_) | Type::Pointer(_) => Expr::Integer(Integer::new_zero()).cast(ty),
-            Type::Float(_) => Expr::Float(Float::new_zero()).cast(ty),
+            Type::Int(_) | Type::Pointer(_) => Expression::Integer(Integer::new_zero()).cast(ty),
+            Type::Float(_) => Expression::Float(Float::new_zero()).cast(ty),
             _ => unimplemented!(),
         }
     }
 
-    pub fn from_c<'a>(val: &c::Expression<'a>) -> Expr {
+    pub fn from_c<'a>(val: &c::Expression<'a>) -> Expression {
         match *val {
-            c::Expression::Constant(ref c) => Expr::from_const(&c),
-            c::Expression::Binary(ref op) => Expr::from_binop(op),
-            c::Expression::Unary(ref op) => Expr::from_unop(op),
+            c::Expression::Constant(ref c) => Expression::from_const(&c),
+            c::Expression::Binary(ref op) => Expression::from_binop(op),
+            c::Expression::Unary(ref op) => Expression::from_unop(op),
             _ => unimplemented!(),
         }
     }
 
-    fn from_const(c: &c::Constant) -> Expr {
+    fn from_const(c: &c::Constant) -> Expression {
         let expr = match *c {
-            c::Constant::Integer(ref i) => Expr::Integer(Integer::from_c(i)),
-            c::Constant::Float(ref f) => Expr::Float(Float::from_c(f)),
+            c::Constant::Integer(ref i) => Expression::Integer(Integer::from_c(i)),
+            c::Constant::Float(ref f) => Expression::Float(Float::from_c(f)),
         };
 
         // Assumes that `literal as ty` has the same effect as explicitly
         // typing literal with the suffix that corresponds to ty.
-        Expr::Cast(Box::new(expr), Type::from_c(&c.ty()))
+        Expression::Cast(Box::new(expr), Type::from_c(&c.ty()))
     }
 
-    fn from_unop(o: &c::Unary) -> Expr {
-        let arg = Box::new(Expr::from_c(&o.operand));
+    fn from_unop(o: &c::Unary) -> Expression {
+        let arg = Box::new(Expression::from_c(&o.operand));
         match o.operator {
-            c::UnaryOperator::Minus => Expr::Unary("-", arg),
+            c::UnaryOperator::Minus => Expression::Unary("-", arg),
             _ => unimplemented!(),
         }
     }
 
-    fn from_binop(o: &c::Binary) -> Expr {
-        let lhs = Box::new(Expr::from_c(&o.lhs));
-        let rhs = Box::new(Expr::from_c(&o.rhs));
+    fn from_binop(o: &c::Binary) -> Expression {
+        let lhs = Box::new(Expression::from_c(&o.lhs));
+        let rhs = Box::new(Expression::from_c(&o.rhs));
 
         let op = match o.operator {
             c::BinaryOperator::Multiply => "*",
@@ -67,12 +67,12 @@ impl Expr {
             _ => unimplemented!(),
         };
 
-        Expr::Infix(op, lhs, rhs)
+        Expression::Infix(op, lhs, rhs)
     }
 
-    pub fn cast(self, ty: &Type) -> Expr {
+    pub fn cast(self, ty: &Type) -> Expression {
         if self.ty() != *ty {
-            Expr::Cast(Box::new(self), ty.clone())
+            Expression::Cast(Box::new(self), ty.clone())
         } else {
             self
         }
@@ -80,23 +80,23 @@ impl Expr {
 
     fn ty(&self) -> Type {
         match *self {
-            Expr::Integer(_) => Type::Auto,
-            Expr::Float(_) => Type::Auto,
-            Expr::Cast(_, ref ty) => ty.clone(),
-            Expr::Unary(_, ref arg) => arg.ty(),
-            Expr::Infix(_, ref lhs, _) => lhs.ty(),
+            Expression::Integer(_) => Type::Auto,
+            Expression::Float(_) => Type::Auto,
+            Expression::Cast(_, ref ty) => ty.clone(),
+            Expression::Unary(_, ref arg) => arg.ty(),
+            Expression::Infix(_, ref lhs, _) => lhs.ty(),
         }
     }
 }
 
-impl fmt::ToCode for Expr {
+impl fmt::ToCode for Expression {
     fn to_code(&self, fmt: &mut fmt::Formatter) {
         match *self {
-            Expr::Integer(ref i) => i.to_code(fmt),
-            Expr::Float(ref f) => f.to_code(fmt),
-            Expr::Cast(ref expr, ref ty) => toks!(fmt, "(", expr, ") as ", ty.name()),
-            Expr::Unary(op, ref arg) => toks!(fmt, op, "(", arg, ")"),
-            Expr::Infix(op, ref lhs, ref rhs) => toks!(fmt, "(", lhs, ") ", op, " (", rhs, ")"),
+            Expression::Integer(ref i) => i.to_code(fmt),
+            Expression::Float(ref f) => f.to_code(fmt),
+            Expression::Cast(ref expr, ref ty) => toks!(fmt, "(", expr, ") as ", ty.name()),
+            Expression::Unary(op, ref arg) => toks!(fmt, op, "(", arg, ")"),
+            Expression::Infix(op, ref lhs, ref rhs) => toks!(fmt, "(", lhs, ") ", op, " (", rhs, ")"),
         }
     }
 }
